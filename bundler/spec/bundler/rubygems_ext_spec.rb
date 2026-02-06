@@ -567,22 +567,22 @@ RSpec.describe "Bundler RubyGems Extensions" do
 
     describe "#encode_with" do
       it "encodes dependency data to a coder" do
-        coder = {}
+        coder = Psych::Coder.new("tag")
         dep.encode_with(coder)
 
-        expect(coder).to have_key("name")
-        expect(coder["name"]).to eq("test_dep")
-        expect(coder).to have_key("requirement")
-        expect(coder).to have_key("type")
+        expect(coder.map).to have_key("name")
+        expect(coder.map["name"]).to eq("test_dep")
+        expect(coder.map).to have_key("requirement")
+        expect(coder.map).to have_key("type")
       end
 
       it "includes all expected keys" do
-        coder = {}
+        coder = Psych::Coder.new("tag")
         dep.encode_with(coder)
 
         expected_keys = %w[name requirement type prerelease version_requirements]
         expected_keys.each do |key|
-          expect(coder).to have_key(key), "Expected coder to have key '#{key}'"
+          expect(coder.map).to have_key(key), "Expected coder to have key '#{key}'"
         end
       end
     end
