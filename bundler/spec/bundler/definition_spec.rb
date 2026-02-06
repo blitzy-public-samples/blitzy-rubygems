@@ -289,6 +289,48 @@ RSpec.describe Bundler::Definition do
     end
   end
 
+  describe "lockfile generation through definition" do
+    context "when generating lockfile" do
+      it "produces all standard lockfile sections through definition resolution" do
+        install_gemfile <<-G
+          source "https://gem.repo1"
+          gem "foo"
+        G
+
+        lockfile_content = lockfile
+
+        expect(lockfile_content).to include("GEM")
+        expect(lockfile_content).to include("PLATFORMS")
+        expect(lockfile_content).to include("DEPENDENCIES")
+        expect(lockfile_content).to include("BUNDLED WITH")
+      end
+
+      it "formats gem specs and dependency entries correctly in lockfile output" do
+        install_gemfile <<-G
+          source "https://gem.repo1"
+          gem "myrack"
+        G
+
+        lockfile_content = lockfile
+
+        expect(lockfile_content).to include("myrack (1.0.0)")
+        expect(lockfile_content).to match(/DEPENDENCIES\n\s+myrack\n/)
+      end
+
+      it "includes correct platform and bundler version entries in lockfile" do
+        install_gemfile <<-G
+          source "https://gem.repo1"
+          gem "foo"
+        G
+
+        lockfile_content = lockfile
+
+        expect(lockfile_content).to include("PLATFORMS\n  #{lockfile_platforms}\n")
+        expect(lockfile_content).to include("BUNDLED WITH\n   #{Bundler::VERSION}\n")
+      end
+    end
+  end
+
   def mock_source_list
     Class.new do
       def all_sources
