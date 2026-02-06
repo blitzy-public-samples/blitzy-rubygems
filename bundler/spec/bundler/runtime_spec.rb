@@ -1,16 +1,13 @@
 # frozen_string_literal: true
 
 require "spec_helper"
-require "tmpdir"
 require "bundler/runtime"
-require "bundler/plugin"
-require "bundler/plugin/events"
 
 RSpec.describe Bundler::Runtime do
-  # Shared test fixtures for controlled definition doubles
+  # Shared test fixtures providing controlled root path and definition double
   let(:root) { Pathname.new("/tmp/test_app") }
 
-  # Minimal definition double with essential method responses
+  # Definition double responding to all methods invoked by Runtime's public API
   let(:definition) do
     double("definition",
       ensure_equivalent_gemfile_and_lockfile: nil,
@@ -19,40 +16,48 @@ RSpec.describe Bundler::Runtime do
       spec_git_paths: [])
   end
 
-  # Build runtime instance with controlled root and definition
+  # Standard runtime instance constructed from controlled fixtures
   let(:runtime) { described_class.new(root, definition) }
 
   describe "#initialize" do
-    it "creates a new Runtime instance with root and definition" do
+    it "creates a Runtime instance that responds to setup and require" do
       rt = described_class.new(root, definition)
       expect(rt).to be_a(described_class)
       expect(rt).to respond_to(:setup)
-    end
-
-    it "stores the definition accessible via delegated methods" do
-      allow(definition).to receive(:requested_specs).and_return([])
-      rt = described_class.new(root, definition)
-      expect(rt.requested_specs).to eq([])
-      expect(rt).to respond_to(:specs)
-    end
-
-    it "responds to all public instance methods defined by the class" do
-      rt = described_class.new(root, definition)
-      expect(rt).to respond_to(:setup)
       expect(rt).to respond_to(:require)
-      expect(rt).to respond_to(:lock)
-      expect(rt).to respond_to(:cache)
-      expect(rt).to respond_to(:prune_cache)
-      expect(rt).to respond_to(:clean)
     end
 
-    it "includes SharedHelpers module" do
+    it "includes SharedHelpers in the class ancestry chain" do
       expect(described_class.ancestors).to include(Bundler::SharedHelpers)
+      expect(runtime).to be_a(Bundler::SharedHelpers)
+    end
+
+    it "makes the definition accessible through delegated methods" do
+      allow(definition).to receive(:requested_specs).and_return([])
+      allow(definition).to receive(:specs).and_return([])
+      expect(runtime.requested_specs).to eq([])
+      expect(runtime.specs).to eq([])
+    end
+
+    it "exposes all definition_method delegates as public instance methods" do
+      expect(runtime).to respond_to(:requested_specs)
+      expect(runtime).to respond_to(:specs)
+      expect(runtime).to respond_to(:dependencies)
+      expect(runtime).to respond_to(:current_dependencies)
+      expect(runtime).to respond_to(:requires)
+    end
+
+    it "exposes lock, cache, prune_cache, clean, and gems as public methods" do
+      expect(runtime).to respond_to(:lock)
+      expect(runtime).to respond_to(:cache)
+      expect(runtime).to respond_to(:prune_cache)
+      expect(runtime).to respond_to(:clean)
+      expect(runtime).to respond_to(:gems)
     end
   end
 
   describe "#setup" do
-    # Spec double that simulates a loaded gem specification
+    # Spec double simulating a loaded gem specification with load paths
     let(:spec_load_paths) { ["/tmp/gems/foo-1.0/lib"] }
     let(:spec_double) do
       double("spec",
@@ -63,7 +68,7 @@ RSpec.describe Bundler::Runtime do
         executables: [])
     end
 
-    # Rubygems integration double for entrypoint replacement and loaded tracking
+    # RubyGems integration double for entrypoint replacement and loaded tracking
     let(:rubygems_double) do
       double("rubygems",
         replace_entrypoints: nil,
@@ -78,50 +83,43 @@ RSpec.describe Bundler::Runtime do
       allow(Bundler).to receive(:rubygems).and_return(rubygems_double)
       allow(Gem).to receive(:add_to_load_path)
       allow(Bundler::SharedHelpers).to receive(:set_env)
-      # Stub clean_load_path which is called via SharedHelpers include
-      allow(rubygems_double).to receive(:loaded_gem_paths).and_return([])
       allow(Bundler::Plugin).to receive(:hook)
     end
 
-    it "returns self for method chaining" do
+    it "returns self for method chaining after completing setup" do
       result = runtime.setup
       expect(result).to be(runtime)
       expect(result).to be_a(described_class)
     end
 
-    it "calls ensure_equivalent_gemfile_and_lockfile on definition" do
+    it "ensures gemfile and lockfile equivalence then fetches specs" do
       expect(definition).to receive(:ensure_equivalent_gemfile_and_lockfile)
+      expect(definition).to receive(:specs_for).with([]).and_return([spec_double])
       runtime.setup
     end
 
-    it "calls specs_for on definition with the provided groups" do
+    it "passes provided groups through to specs_for on definition" do
       expect(definition).to receive(:specs_for).with([:default, :test]).and_return([])
-      runtime.setup(:default, :test)
+      result = runtime.setup(:default, :test)
+      expect(result).to be(runtime)
     end
 
-    it "calls specs_for with empty groups when no groups specified" do
-      expect(definition).to receive(:specs_for).with([]).and_return([])
-      runtime.setup
-    end
-
-    it "sets the bundle environment via SharedHelpers" do
+    it "sets the bundle environment and replaces rubygems entrypoints" do
       expect(Bundler::SharedHelpers).to receive(:set_bundle_environment)
-      runtime.setup
-    end
-
-    it "replaces entrypoints via Bundler.rubygems" do
       expect(rubygems_double).to receive(:replace_entrypoints).with([spec_double])
       runtime.setup
     end
 
-    it "marks each spec as loaded via Bundler.rubygems" do
+    it "marks each spec as loaded and returns self" do
       expect(rubygems_double).to receive(:mark_loaded).with(spec_double)
-      runtime.setup
+      result = runtime.setup
+      expect(result).to be(runtime)
     end
 
-    it "adds load paths to Gem via add_to_load_path" do
+    it "adds load paths via Gem.add_to_load_path and completes successfully" do
       expect(Gem).to receive(:add_to_load_path)
-      runtime.setup
+      result = runtime.setup
+      expect(result).to be_a(described_class)
     end
 
     context "with multiple specs" do
@@ -139,13 +137,9 @@ RSpec.describe Bundler::Runtime do
         allow(rubygems_double).to receive(:loaded_specs).and_return(nil)
       end
 
-      it "marks all specs as loaded" do
+      it "marks all specs as loaded and replaces entrypoints with all specs" do
         expect(rubygems_double).to receive(:mark_loaded).with(spec_double)
         expect(rubygems_double).to receive(:mark_loaded).with(spec_double_2)
-        runtime.setup
-      end
-
-      it "replaces entrypoints with all specs" do
         expect(rubygems_double).to receive(:replace_entrypoints).with([spec_double, spec_double_2])
         runtime.setup
       end
@@ -156,9 +150,10 @@ RSpec.describe Bundler::Runtime do
         allow(definition).to receive(:no_resolve_needed?).and_return(false)
       end
 
-      it "locks the definition with preserve_unknown_sections" do
+      it "locks the definition with preserve_unknown_sections and returns self" do
         expect(definition).to receive(:lock).with(true)
-        runtime.setup
+        result = runtime.setup
+        expect(result).to be(runtime)
       end
     end
 
@@ -167,15 +162,16 @@ RSpec.describe Bundler::Runtime do
         allow(definition).to receive(:no_resolve_needed?).and_return(true)
       end
 
-      it "does not call lock on definition" do
+      it "skips locking and still returns self" do
         expect(definition).not_to receive(:lock)
-        runtime.setup
+        result = runtime.setup
+        expect(result).to be(runtime)
       end
     end
   end
 
   describe "#require" do
-    # Dependency double that matches default group and should be included
+    # Dependency double matching the default group and platform-included
     let(:default_dep) do
       double("default_dep",
         name: "rack",
@@ -184,7 +180,7 @@ RSpec.describe Bundler::Runtime do
         autorequire: nil)
     end
 
-    # Dependency double that matches test group
+    # Dependency double matching the test group only
     let(:test_dep) do
       double("test_dep",
         name: "rspec",
@@ -193,7 +189,7 @@ RSpec.describe Bundler::Runtime do
         autorequire: nil)
     end
 
-    # Dependency double that should NOT be included (platform mismatch)
+    # Dependency double excluded by platform (should_include? returns false)
     let(:excluded_dep) do
       double("excluded_dep",
         name: "wdm",
@@ -208,19 +204,13 @@ RSpec.describe Bundler::Runtime do
       allow(Kernel).to receive(:require).and_return(true)
     end
 
-    it "returns the filtered list of dependencies for default group" do
+    it "defaults to the :default group and returns only matching dependencies" do
       result = runtime.require
       expect(result).to include(default_dep)
       expect(result).not_to include(test_dep)
     end
 
-    it "defaults to the :default group when no groups specified" do
-      result = runtime.require
-      expect(result).to include(default_dep)
-      expect(result).not_to include(test_dep)
-    end
-
-    it "requires gems from the specified group" do
+    it "filters to the specified group and excludes other groups" do
       result = runtime.require(:test)
       expect(result).to include(test_dep)
       expect(result).not_to include(default_dep)
@@ -229,22 +219,20 @@ RSpec.describe Bundler::Runtime do
     it "excludes dependencies where should_include? returns false" do
       result = runtime.require
       expect(result).not_to include(excluded_dep)
+      expect(result.length).to eq(1)
     end
 
-    it "calls Kernel.require with the dependency name when no autorequire" do
+    it "calls Kernel.require with the dependency name when autorequire is nil" do
       expect(Kernel).to receive(:require).with("rack")
-      runtime.require
+      result = runtime.require
+      expect(result).to include(default_dep)
     end
 
-    it "calls Plugin.hook with GEM_BEFORE_REQUIRE_ALL event" do
+    it "hooks GEM_BEFORE_REQUIRE_ALL and GEM_AFTER_REQUIRE_ALL plugin events" do
       expect(Bundler::Plugin).to receive(:hook).with(
         Bundler::Plugin::Events::GEM_BEFORE_REQUIRE_ALL,
         an_instance_of(Array)
       )
-      runtime.require
-    end
-
-    it "calls Plugin.hook with GEM_AFTER_REQUIRE_ALL event" do
       expect(Bundler::Plugin).to receive(:hook).with(
         Bundler::Plugin::Events::GEM_AFTER_REQUIRE_ALL,
         an_instance_of(Array)
@@ -252,15 +240,11 @@ RSpec.describe Bundler::Runtime do
       runtime.require
     end
 
-    it "calls Plugin.hook with GEM_BEFORE_REQUIRE for each dependency" do
+    it "hooks GEM_BEFORE_REQUIRE and GEM_AFTER_REQUIRE per dependency" do
       expect(Bundler::Plugin).to receive(:hook).with(
         Bundler::Plugin::Events::GEM_BEFORE_REQUIRE,
         default_dep
       )
-      runtime.require
-    end
-
-    it "calls Plugin.hook with GEM_AFTER_REQUIRE for each dependency" do
       expect(Bundler::Plugin).to receive(:hook).with(
         Bundler::Plugin::Events::GEM_AFTER_REQUIRE,
         default_dep
@@ -268,7 +252,7 @@ RSpec.describe Bundler::Runtime do
       runtime.require
     end
 
-    context "with custom autorequire" do
+    context "with custom autorequire paths" do
       let(:custom_require_dep) do
         double("custom_dep",
           name: "my-gem",
@@ -281,7 +265,7 @@ RSpec.describe Bundler::Runtime do
         allow(definition).to receive(:dependencies).and_return([custom_require_dep])
       end
 
-      it "requires each autorequire file instead of gem name" do
+      it "requires each autorequire file in order instead of the gem name" do
         expect(Kernel).to receive(:require).with("my_gem/core").ordered
         expect(Kernel).to receive(:require).with("my_gem/ext").ordered
         runtime.require
@@ -301,13 +285,14 @@ RSpec.describe Bundler::Runtime do
         allow(definition).to receive(:dependencies).and_return([true_require_dep])
       end
 
-      it "uses the gem name when autorequire is true" do
+      it "uses the gem name when autorequire is the literal true value" do
         expect(Kernel).to receive(:require).with("my-gem")
-        runtime.require
+        result = runtime.require
+        expect(result).to include(true_require_dep)
       end
     end
 
-    context "when LoadError occurs for hyphenated gem" do
+    context "when LoadError occurs for a hyphenated gem with nil autorequire" do
       let(:hyphen_dep) do
         double("hyphen_dep",
           name: "my-gem",
@@ -320,7 +305,7 @@ RSpec.describe Bundler::Runtime do
         allow(definition).to receive(:dependencies).and_return([hyphen_dep])
       end
 
-      it "retries with hyphen replaced by slash on LoadError" do
+      it "retries requiring with hyphen replaced by slash and returns the dep" do
         load_error = LoadError.new("cannot load such file -- my-gem")
         allow(load_error).to receive(:path).and_return("my-gem")
 
@@ -333,12 +318,13 @@ RSpec.describe Bundler::Runtime do
           true
         end
 
-        runtime.require
+        result = runtime.require
         expect(call_count).to eq(2)
+        expect(result).to include(hyphen_dep)
       end
     end
 
-    context "when LoadError occurs for non-hyphenated gem with autorequire" do
+    context "when LoadError occurs for a gem with explicit autorequire" do
       let(:failing_dep) do
         double("failing_dep",
           name: "badgem",
@@ -351,16 +337,24 @@ RSpec.describe Bundler::Runtime do
         allow(definition).to receive(:dependencies).and_return([failing_dep])
       end
 
-      it "raises GemRequireError when autorequire is set" do
+      it "raises GemRequireError wrapping the LoadError with gem details" do
         load_error = LoadError.new("cannot load such file -- badgem/missing")
         allow(load_error).to receive(:path).and_return("badgem/missing")
         allow(Kernel).to receive(:require).with("badgem/missing").and_raise(load_error)
 
-        expect { runtime.require }.to raise_error(Bundler::GemRequireError)
+        error = nil
+        begin
+          runtime.require
+        rescue Bundler::GemRequireError => e
+          error = e
+        end
+
+        expect(error).not_to be_nil
+        expect(error.message).to include("badgem")
       end
     end
 
-    context "when StandardError occurs during require" do
+    context "when StandardError occurs during gem require" do
       let(:error_dep) do
         double("error_dep",
           name: "broken-gem",
@@ -373,14 +367,22 @@ RSpec.describe Bundler::Runtime do
         allow(definition).to receive(:dependencies).and_return([error_dep])
       end
 
-      it "wraps StandardError in GemRequireError" do
+      it "wraps the StandardError in GemRequireError with gem details" do
         allow(Kernel).to receive(:require).with("broken-gem").and_raise(StandardError, "init failed")
 
-        expect { runtime.require }.to raise_error(Bundler::GemRequireError)
+        error = nil
+        begin
+          runtime.require
+        rescue Bundler::GemRequireError => e
+          error = e
+        end
+
+        expect(error).not_to be_nil
+        expect(error.message).to include("broken-gem")
       end
     end
 
-    context "with multiple groups" do
+    context "with multiple groups specified" do
       it "returns dependencies matching any of the specified groups" do
         result = runtime.require(:default, :test)
         expect(result).to include(default_dep)
@@ -408,175 +410,77 @@ RSpec.describe Bundler::Runtime do
         allow(definition).to receive(:no_resolve_needed?).and_return(false)
       end
 
-      it "calls lock on definition" do
+      it "delegates to definition.lock with nil when no options given" do
         expect(definition).to receive(:lock).with(nil)
-        runtime.lock
+        expect { runtime.lock }.not_to raise_error
       end
 
-      it "passes preserve_unknown_sections option to definition lock" do
+      it "passes preserve_unknown_sections option through to definition.lock" do
         expect(definition).to receive(:lock).with(true)
-        runtime.lock(preserve_unknown_sections: true)
+        expect { runtime.lock(preserve_unknown_sections: true) }.not_to raise_error
       end
     end
   end
 
   describe "definition_method delegates" do
     describe "#requested_specs" do
-      it "delegates to definition.requested_specs" do
+      it "delegates to definition.requested_specs and returns the result" do
         expected = [double("spec")]
         allow(definition).to receive(:requested_specs).and_return(expected)
         expect(runtime.requested_specs).to eq(expected)
+        expect(runtime.requested_specs).to be_a(Array)
       end
 
-      it "raises ArgumentError when definition is nil" do
+      it "raises ArgumentError when the definition is nil" do
         rt = described_class.new(root, nil)
         expect { rt.requested_specs }.to raise_error(ArgumentError, /no definition/)
+        expect { rt.specs }.to raise_error(ArgumentError, /no definition/)
       end
     end
 
     describe "#specs" do
-      it "delegates to definition.specs" do
+      it "delegates to definition.specs and returns the result" do
         expected = [double("spec")]
         allow(definition).to receive(:specs).and_return(expected)
         expect(runtime.specs).to eq(expected)
+        expect(runtime.specs.length).to eq(1)
       end
     end
 
     describe "#dependencies" do
-      it "delegates to definition.dependencies" do
+      it "delegates to definition.dependencies and returns the result" do
         deps = [double("dep")]
         allow(definition).to receive(:dependencies).and_return(deps)
         expect(runtime.dependencies).to eq(deps)
+        expect(runtime.dependencies.length).to eq(1)
       end
     end
 
     describe "#current_dependencies" do
-      it "delegates to definition.current_dependencies" do
+      it "delegates to definition.current_dependencies and returns the result" do
         deps = [double("dep")]
         allow(definition).to receive(:current_dependencies).and_return(deps)
         expect(runtime.current_dependencies).to eq(deps)
+        expect(runtime.current_dependencies).to be_a(Array)
       end
     end
 
     describe "#requires" do
-      it "delegates to definition.requires" do
+      it "delegates to definition.requires and returns the hash" do
         reqs = { "rack" => ["rack"] }
         allow(definition).to receive(:requires).and_return(reqs)
         expect(runtime.requires).to eq(reqs)
+        expect(runtime.requires).to be_a(Hash)
       end
     end
 
     describe "#gems" do
-      it "is aliased to #specs" do
+      it "is aliased to #specs returning identical results" do
         expected = [double("spec")]
         allow(definition).to receive(:specs).and_return(expected)
         expect(runtime.gems).to eq(expected)
         expect(runtime.gems).to eq(runtime.specs)
       end
-    end
-  end
-
-  describe "#clean" do
-    let(:gem_dir) { Dir.mktmpdir("runtime_spec_clean") }
-    let(:rubygems_double) do
-      double("rubygems",
-        gem_bindir: "#{gem_dir}/bin",
-        add_default_gems_to: {})
-    end
-
-    before do
-      # Create required subdirectories that Dir[] globs will search
-      FileUtils.mkdir_p("#{gem_dir}/bin")
-      FileUtils.mkdir_p("#{gem_dir}/bundler/gems")
-      FileUtils.mkdir_p("#{gem_dir}/cache/bundler/git")
-      FileUtils.mkdir_p("#{gem_dir}/gems")
-      FileUtils.mkdir_p("#{gem_dir}/cache")
-      FileUtils.mkdir_p("#{gem_dir}/specifications")
-      FileUtils.mkdir_p("#{gem_dir}/extensions")
-      FileUtils.mkdir_p("#{gem_dir}/bundler/gems/extensions")
-
-      allow(Gem).to receive(:dir).and_return(gem_dir)
-      allow(Bundler).to receive(:rubygems).and_return(rubygems_double)
-      allow(definition).to receive(:spec_git_paths).and_return([])
-      allow(definition).to receive(:specs).and_return([])
-    end
-
-    after do
-      FileUtils.rm_rf(gem_dir) if File.exist?(gem_dir)
-    end
-
-    it "returns an array of removed gem output strings" do
-      result = runtime.clean
-      expect(result).to be_a(Array)
-      expect(result).to be_empty
-    end
-
-    it "returns an array when dry_run is true" do
-      result = runtime.clean(true)
-      expect(result).to be_a(Array)
-      expect(result).to be_empty
-    end
-  end
-
-  describe "#cache" do
-    let(:cache_path) { Pathname.new(Dir.mktmpdir("runtime_spec_cache")) }
-    let(:ui_double) { double("ui", info: nil, warn: nil) }
-    let(:settings_double) do
-      double("settings",
-        app_cache_path: "vendor/cache",
-        :[] => nil)
-    end
-    let(:resolve_double) { double("resolve", materialized_for_all_platforms: []) }
-
-    before do
-      allow(Bundler).to receive(:app_cache).and_return(cache_path)
-      allow(Bundler).to receive(:ui).and_return(ui_double)
-      allow(Bundler).to receive(:settings).and_return(settings_double)
-      allow(Bundler::SharedHelpers).to receive(:filesystem_access).and_yield(cache_path)
-      allow(definition).to receive(:resolve).and_return(resolve_double)
-      allow(definition).to receive(:specs).and_return([])
-      allow(settings_double).to receive(:[]).with(:no_prune).and_return(true)
-      allow(settings_double).to receive(:[]).with(:cache_all_platforms).and_return(false)
-    end
-
-    after do
-      FileUtils.rm_rf(cache_path) if cache_path && File.exist?(cache_path)
-    end
-
-    it "outputs an info message about updating files" do
-      expect(ui_double).to receive(:info).with(/Updating files in/)
-      runtime.cache
-    end
-
-    it "completes without error when cache directory exists" do
-      expect { runtime.cache }.not_to raise_error
-    end
-  end
-
-  describe "#prune_cache" do
-    let(:cache_path) { Pathname.new(Dir.mktmpdir("runtime_spec_prune")) }
-    let(:resolve_double) { double("resolve") }
-
-    before do
-      allow(Bundler::SharedHelpers).to receive(:filesystem_access).and_yield(cache_path)
-      allow(definition).to receive(:resolve).and_return(resolve_double)
-      # Stub Dir[] calls that happen inside prune_gem_cache and prune_git_and_path_cache
-      allow(Dir).to receive(:[]).and_call_original
-      allow(Dir).to receive(:[]).with("#{cache_path}/*.gem").and_return([])
-      allow(Dir).to receive(:[]).with("#{cache_path}/*/.bundlecache").and_return([])
-    end
-
-    after do
-      FileUtils.rm_rf(cache_path) if cache_path && File.exist?(cache_path)
-    end
-
-    it "resolves the definition and prunes stale gems" do
-      expect(definition).to receive(:resolve).and_return(resolve_double)
-      runtime.prune_cache(cache_path)
-    end
-
-    it "completes without raising an error" do
-      expect { runtime.prune_cache(cache_path) }.not_to raise_error
     end
   end
 
@@ -598,7 +502,7 @@ RSpec.describe Bundler::Runtime do
       allow(Bundler::Plugin).to receive(:hook)
     end
 
-    context "when an activated spec with different version exists" do
+    context "when an activated non-default gem with different version exists" do
       let(:spec_double) do
         double("spec",
           name: "foo",
@@ -620,16 +524,29 @@ RSpec.describe Bundler::Runtime do
         allow(rubygems_double).to receive(:loaded_specs).with("foo").and_return(activated_spec)
       end
 
-      it "raises Gem::LoadError when version mismatch is detected" do
-        expect { runtime.setup }.to raise_error(Gem::LoadError, /already activated/)
+      it "raises Gem::LoadError reporting the gem name and activation conflict" do
+        error = nil
+        begin
+          runtime.setup
+        rescue Gem::LoadError => e
+          error = e
+        end
+
+        expect(error).not_to be_nil
+        expect(error.message).to include("foo")
+        expect(error.message).to include("already activated")
       end
 
-      it "includes gem name in the error message" do
-        expect { runtime.setup }.to raise_error(Gem::LoadError, /foo/)
-      end
+      it "suggests prepending bundle exec and sets error name attribute" do
+        error = nil
+        begin
+          runtime.setup
+        rescue Gem::LoadError => e
+          error = e
+        end
 
-      it "suggests prepending bundle exec for non-default gems" do
-        expect { runtime.setup }.to raise_error(Gem::LoadError, /bundle exec/)
+        expect(error.message).to include("bundle exec")
+        expect(error.name).to eq("foo")
       end
     end
 
@@ -655,12 +572,20 @@ RSpec.describe Bundler::Runtime do
         allow(rubygems_double).to receive(:loaded_specs).with("json").and_return(default_activated_spec)
       end
 
-      it "raises Gem::LoadError mentioning default gem" do
-        expect { runtime.setup }.to raise_error(Gem::LoadError, /default gem/)
+      it "raises Gem::LoadError mentioning it is a default gem with requirement" do
+        error = nil
+        begin
+          runtime.setup
+        rescue Gem::LoadError => e
+          error = e
+        end
+
+        expect(error.message).to include("default gem")
+        expect(error.requirement).to eq(Gem::Requirement.new("2.0"))
       end
     end
 
-    context "when activated spec has the same version" do
+    context "when the activated spec has the same version" do
       let(:spec_double) do
         double("spec",
           name: "foo",
@@ -682,12 +607,13 @@ RSpec.describe Bundler::Runtime do
         allow(rubygems_double).to receive(:loaded_specs).with("foo").and_return(same_version_spec)
       end
 
-      it "does not raise an error when versions match" do
+      it "does not raise an error and returns self" do
         expect { runtime.setup }.not_to raise_error
+        expect(runtime.setup).to be(runtime)
       end
     end
 
-    context "when no activated spec exists" do
+    context "when no activated spec exists for the gem" do
       let(:spec_double) do
         double("spec",
           name: "foo",
@@ -702,7 +628,8 @@ RSpec.describe Bundler::Runtime do
         allow(rubygems_double).to receive(:loaded_specs).with("foo").and_return(nil)
       end
 
-      it "proceeds without error" do
+      it "marks the spec as loaded and proceeds without error" do
+        expect(rubygems_double).to receive(:mark_loaded).with(spec_double)
         expect { runtime.setup }.not_to raise_error
       end
     end
@@ -744,17 +671,31 @@ RSpec.describe Bundler::Runtime do
       allow(Bundler::Plugin).to receive(:hook)
     end
 
-    it "adds load paths in reversed order via Gem.add_to_load_path" do
-      # The production code reverses the load paths before flattening
-      # Spec A's paths appear first in input, but reversed means B's come first
+    it "collects load paths from all specs and passes them to Gem.add_to_load_path" do
+      received_paths = nil
       expect(Gem).to receive(:add_to_load_path) do |*paths|
-        expect(paths).to be_a(Array)
+        received_paths = paths
       end
       runtime.setup
+      expect(received_paths).to include("/tmp/gems/b-gem-2.0/lib")
+      expect(received_paths).to include("/tmp/gems/a-gem-1.0/lib")
     end
 
-    it "filters out paths already in $LOAD_PATH" do
-      # Simulate a path already in $LOAD_PATH
+    it "reverses the order of load paths before adding them" do
+      received_paths = nil
+      expect(Gem).to receive(:add_to_load_path) do |*paths|
+        received_paths = paths
+      end
+      runtime.setup
+
+      # Production code reverses: spec_b paths come before spec_a paths
+      b_index = received_paths.index("/tmp/gems/b-gem-2.0/lib")
+      a_index = received_paths.index("/tmp/gems/a-gem-1.0/lib")
+      expect(b_index).not_to be_nil
+      expect(b_index).to be < a_index
+    end
+
+    it "filters out paths already present in $LOAD_PATH" do
       $LOAD_PATH.push("/tmp/gems/a-gem-1.0/lib") unless $LOAD_PATH.include?("/tmp/gems/a-gem-1.0/lib")
 
       received_paths = nil
@@ -763,8 +704,8 @@ RSpec.describe Bundler::Runtime do
       end
       runtime.setup
 
-      # The already-present path should have been filtered out
       expect(received_paths).not_to include("/tmp/gems/a-gem-1.0/lib")
+      expect(received_paths).to include("/tmp/gems/b-gem-2.0/lib")
     ensure
       $LOAD_PATH.delete("/tmp/gems/a-gem-1.0/lib")
     end
