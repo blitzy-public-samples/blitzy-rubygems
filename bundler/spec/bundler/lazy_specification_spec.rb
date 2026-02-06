@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "spec_helper"
 require "bundler/lazy_specification"
 
 RSpec.describe Bundler::LazySpecification do
