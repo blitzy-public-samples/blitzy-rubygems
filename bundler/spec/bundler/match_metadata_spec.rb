@@ -4,11 +4,15 @@ require "spec_helper"
 require "bundler/match_metadata"
 
 RSpec.describe Bundler::MatchMetadata do
-  # Test class that includes MatchMetadata and provides the required instance
-  # variables and runtime_dependencies method for testing the module's behavior.
+  # Lightweight test class that includes the production MatchMetadata module.
+  # Provides the @required_ruby_version, @required_rubygems_version instance
+  # variables and the runtime_dependencies method the module expects its
+  # host object to define. No business logic is reimplemented here — this
+  # class is pure test-setup scaffolding for invoking real production methods.
   let(:test_class) do
+    mod = described_class
     Class.new do
-      include Bundler::MatchMetadata
+      include mod
 
       attr_accessor :required_ruby_version, :required_rubygems_version
 
@@ -24,169 +28,219 @@ RSpec.describe Bundler::MatchMetadata do
     end
   end
 
+  subject { test_class.new }
+
   describe "#matches_current_metadata?" do
-    it "returns true when both Ruby and RubyGems versions satisfy requirements" do
-      obj = test_class.new(
-        ruby_version: Gem::Requirement.new(">= 0"),
-        rubygems_version: Gem::Requirement.new(">= 0")
-      )
-      result = obj.matches_current_metadata?
-      expect(result).to be true
-      expect(result).to eq(obj.matches_current_ruby? && obj.matches_current_rubygems?)
+    context "when both Ruby and RubyGems versions satisfy requirements" do
+      it "returns true" do
+        obj = test_class.new(
+          ruby_version: Gem::Requirement.new(">= 0"),
+          rubygems_version: Gem::Requirement.new(">= 0")
+        )
+        result = obj.matches_current_metadata?
+        expect(result).to be_truthy
+        expect(result).to eq(obj.matches_current_ruby? && obj.matches_current_rubygems?)
+      end
     end
 
-    it "returns false when Ruby version does not match" do
-      obj = test_class.new(
-        ruby_version: Gem::Requirement.new(">= 99.0.0"),
-        rubygems_version: Gem::Requirement.new(">= 0")
-      )
-      expect(obj.matches_current_metadata?).to be false
-      expect(obj.matches_current_ruby?).to be false
+    context "when Ruby version does not match" do
+      it "returns false" do
+        obj = test_class.new(
+          ruby_version: Gem::Requirement.new(">= 99.0.0"),
+          rubygems_version: Gem::Requirement.new(">= 0")
+        )
+        expect(obj.matches_current_metadata?).to be_falsey
+        expect(obj.matches_current_ruby?).to be false
+      end
     end
 
-    it "returns false when RubyGems version does not match" do
-      obj = test_class.new(
-        ruby_version: Gem::Requirement.new(">= 0"),
-        rubygems_version: Gem::Requirement.new(">= 99.0.0")
-      )
-      expect(obj.matches_current_metadata?).to be false
-      expect(obj.matches_current_rubygems?).to be false
+    context "when RubyGems version does not match" do
+      it "returns false" do
+        obj = test_class.new(
+          ruby_version: Gem::Requirement.new(">= 0"),
+          rubygems_version: Gem::Requirement.new(">= 99.0.0")
+        )
+        expect(obj.matches_current_metadata?).to be_falsey
+        expect(obj.matches_current_rubygems?).to be false
+      end
     end
 
-    it "returns false when neither Ruby nor RubyGems version matches" do
-      obj = test_class.new(
-        ruby_version: Gem::Requirement.new(">= 99.0.0"),
-        rubygems_version: Gem::Requirement.new(">= 99.0.0")
-      )
-      expect(obj.matches_current_metadata?).to be false
-      expect(obj.matches_current_ruby?).to be false
+    context "when neither Ruby nor RubyGems version matches" do
+      it "returns false" do
+        obj = test_class.new(
+          ruby_version: Gem::Requirement.new(">= 99.0.0"),
+          rubygems_version: Gem::Requirement.new(">= 99.0.0")
+        )
+        expect(obj.matches_current_metadata?).to be false
+        expect(obj.matches_current_ruby?).to be false
+      end
     end
   end
 
   describe "#matches_current_ruby?" do
-    it "returns true when Gem.ruby_version satisfies the required_ruby_version" do
-      obj = test_class.new(ruby_version: Gem::Requirement.new(">= 0"))
-      expect(obj.matches_current_ruby?).to be true
-      expect(Gem.ruby_version).to be_a(Gem::Version)
+    context "when Gem.ruby_version satisfies the required_ruby_version" do
+      it "returns true" do
+        obj = test_class.new(ruby_version: Gem::Requirement.new(">= 0"))
+        expect(obj.matches_current_ruby?).to be_truthy
+        expect(Gem.ruby_version).to be_a(Gem::Version)
+      end
     end
 
-    it "returns true with the default requirement (any version)" do
-      obj = test_class.new(ruby_version: Gem::Requirement.default)
-      expect(obj.matches_current_ruby?).to be true
-      expect(obj.matches_current_ruby?).to eq(true)
+    context "with the default requirement" do
+      it "returns true for any version" do
+        obj = test_class.new(ruby_version: Gem::Requirement.default)
+        expect(obj.matches_current_ruby?).to be true
+        expect(obj.matches_current_ruby?).to eq(true)
+      end
     end
 
-    it "returns false for an incompatible Ruby version requirement" do
-      obj = test_class.new(ruby_version: Gem::Requirement.new("= 1.0.0"))
-      expect(obj.matches_current_ruby?).to be false
-      expect(obj.matches_current_metadata?).to be false
+    context "with an incompatible Ruby version requirement" do
+      it "returns false" do
+        obj = test_class.new(ruby_version: Gem::Requirement.new("= 1.0.0"))
+        expect(obj.matches_current_ruby?).to be_falsey
+        expect(obj.matches_current_metadata?).to be false
+      end
     end
 
-    it "returns true when the current Ruby version is within a pessimistic constraint" do
-      current = Gem.ruby_version
-      major = current.segments[0]
-      obj = test_class.new(ruby_version: Gem::Requirement.new(">= #{major}.0"))
-      expect(obj.matches_current_ruby?).to be true
-      expect(obj.matches_current_metadata?).to be true
+    context "when the current Ruby version is within a broad major version constraint" do
+      it "returns true" do
+        current = Gem.ruby_version
+        major = current.segments[0]
+        obj = test_class.new(ruby_version: Gem::Requirement.new(">= #{major}.0"))
+        expect(obj.matches_current_ruby?).to be true
+        expect(obj.matches_current_metadata?).to be_truthy
+      end
     end
   end
 
   describe "#matches_current_rubygems?" do
-    it "returns true when Gem.rubygems_version satisfies the required_rubygems_version" do
-      obj = test_class.new(rubygems_version: Gem::Requirement.new(">= 0"))
-      expect(obj.matches_current_rubygems?).to be true
-      expect(Gem.rubygems_version).to be_a(Gem::Version)
+    context "when Gem.rubygems_version satisfies the required_rubygems_version" do
+      it "returns true" do
+        obj = test_class.new(rubygems_version: Gem::Requirement.new(">= 0"))
+        expect(obj.matches_current_rubygems?).to be_truthy
+        expect(Gem.rubygems_version).to be_a(Gem::Version)
+      end
     end
 
-    it "returns true with the default requirement (any version)" do
-      obj = test_class.new(rubygems_version: Gem::Requirement.default)
-      expect(obj.matches_current_rubygems?).to be true
-      expect(obj.matches_current_rubygems?).to eq(true)
+    context "with the default requirement" do
+      it "returns true for any version" do
+        obj = test_class.new(rubygems_version: Gem::Requirement.default)
+        expect(obj.matches_current_rubygems?).to be true
+        expect(obj.matches_current_rubygems?).to eq(true)
+      end
     end
 
-    it "returns false for an incompatible RubyGems version requirement" do
-      obj = test_class.new(rubygems_version: Gem::Requirement.new("= 0.0.1"))
-      expect(obj.matches_current_rubygems?).to be false
-      expect(obj.matches_current_metadata?).to be false
+    context "with an incompatible RubyGems version requirement" do
+      it "returns false" do
+        obj = test_class.new(rubygems_version: Gem::Requirement.new("= 0.0.1"))
+        expect(obj.matches_current_rubygems?).to be_falsey
+        expect(obj.matches_current_metadata?).to be false
+      end
     end
   end
 
   describe "#expanded_dependencies" do
-    it "returns runtime_dependencies plus metadata dependencies for Ruby and RubyGems" do
-      ruby_req = Gem::Requirement.new(">= 2.0")
-      rubygems_req = Gem::Requirement.new(">= 1.0")
-      obj = test_class.new(ruby_version: ruby_req, rubygems_version: rubygems_req)
-      result = obj.expanded_dependencies
-      expect(result).to be_a(Array)
-      expect(result.length).to eq(2)
+    context "with non-default Ruby and RubyGems requirements" do
+      before do
+        @obj = test_class.new(
+          ruby_version: Gem::Requirement.new(">= 2.0"),
+          rubygems_version: Gem::Requirement.new(">= 1.0")
+        )
+      end
+
+      it "returns metadata dependencies for both Ruby and RubyGems" do
+        result = @obj.expanded_dependencies
+        expect(result).to be_a(Array)
+        expect(result.length).to eq(2)
+      end
+
+      it "includes entries with null-byte-suffixed names" do
+        names = @obj.expanded_dependencies.map(&:name)
+        expect(names).to include("Ruby\0")
+        expect(names).to include("RubyGems\0")
+      end
     end
 
-    it "includes metadata dependencies with null-byte-suffixed names" do
-      ruby_req = Gem::Requirement.new(">= 2.0")
-      rubygems_req = Gem::Requirement.new(">= 1.0")
-      obj = test_class.new(ruby_version: ruby_req, rubygems_version: rubygems_req)
-      result = obj.expanded_dependencies
-      names = result.map(&:name)
-      expect(names).to include("Ruby\0")
-      expect(names).to include("RubyGems\0")
+    context "when runtime_dependencies are provided" do
+      it "prepends them before metadata dependencies" do
+        dep = Gem::Dependency.new("somegem", ">= 1.0")
+        obj = test_class.new(
+          ruby_version: Gem::Requirement.new(">= 2.0"),
+          rubygems_version: Gem::Requirement.new(">= 1.0"),
+          deps: [dep]
+        )
+        result = obj.expanded_dependencies
+        expect(result.length).to eq(3)
+        expect(result.first.name).to eq("somegem")
+      end
     end
 
-    it "prepends runtime_dependencies before metadata dependencies" do
-      dep = Gem::Dependency.new("somegem", ">= 1.0")
-      ruby_req = Gem::Requirement.new(">= 2.0")
-      rubygems_req = Gem::Requirement.new(">= 1.0")
-      obj = test_class.new(ruby_version: ruby_req, rubygems_version: rubygems_req, deps: [dep])
-      result = obj.expanded_dependencies
-      expect(result.length).to eq(3)
-      expect(result.first.name).to eq("somegem")
+    context "when requirements are default (none)" do
+      it "compacts away nil metadata dependencies" do
+        obj = test_class.new(
+          ruby_version: Gem::Requirement.default,
+          rubygems_version: Gem::Requirement.default
+        )
+        result = obj.expanded_dependencies
+        expect(result).to be_a(Array)
+        expect(result.none?(&:nil?)).to be true
+      end
     end
 
-    it "skips nil requirements via compact" do
-      obj = test_class.new(
-        ruby_version: Gem::Requirement.default,
-        rubygems_version: Gem::Requirement.default
-      )
-      result = obj.expanded_dependencies
-      # Default requirements satisfy none? => true, so metadata_dependency returns nil
-      # compact removes nils
-      expect(result).to be_a(Array)
-      expect(result.none? { |d| d.nil? }).to be true
+    context "when only one requirement is non-default" do
+      it "includes only the non-default metadata dependency" do
+        obj = test_class.new(
+          ruby_version: Gem::Requirement.new(">= 2.0"),
+          rubygems_version: Gem::Requirement.default
+        )
+        result = obj.expanded_dependencies
+        expect(result.length).to eq(1)
+        expect(result.first.name).to eq("Ruby\0")
+      end
     end
   end
 
   describe "#metadata_dependency" do
-    let(:obj) { test_class.new }
-
-    it "creates a Gem::Dependency with a null-byte-suffixed name" do
-      dep = obj.metadata_dependency("Ruby", Gem::Requirement.new(">= 2.0"))
-      expect(dep).to be_a(Gem::Dependency)
-      expect(dep.name).to eq("Ruby\0")
+    context "with a valid non-default requirement" do
+      it "creates a Gem::Dependency with a null-byte-suffixed name" do
+        dep = subject.metadata_dependency("Ruby", Gem::Requirement.new(">= 2.0"))
+        expect(dep).to be_a(Gem::Dependency)
+        expect(dep.name).to eq("Ruby\0")
+      end
     end
 
-    it "passes the requirement through to the Gem::Dependency" do
-      req = Gem::Requirement.new(">= 3.0")
-      dep = obj.metadata_dependency("RubyGems", req)
-      expect(dep).to be_a(Gem::Dependency)
-      expect(dep.requirement).to eq(req)
+    context "when the requirement object is forwarded" do
+      it "sets the matching requirement on the Gem::Dependency" do
+        req = Gem::Requirement.new(">= 3.0")
+        dep = subject.metadata_dependency("RubyGems", req)
+        expect(dep).to be_a(Gem::Dependency)
+        expect(dep.requirement).to eq(req)
+      end
     end
 
-    it "returns nil for nil requirement" do
-      result = obj.metadata_dependency("Ruby", nil)
-      expect(result).to be_nil
-      expect(result).to eq(nil)
+    context "when the requirement is nil" do
+      it "returns nil" do
+        result = subject.metadata_dependency("Ruby", nil)
+        expect(result).to be_nil
+        expect(result).to eq(nil)
+      end
     end
 
-    it "returns nil for a requirement where none? is true (default)" do
-      result = obj.metadata_dependency("Ruby", Gem::Requirement.default)
-      expect(result).to be_nil
-      expect(obj.metadata_dependency("RubyGems", Gem::Requirement.default)).to be_nil
+    context "when the requirement is the default (none? is true)" do
+      it "returns nil for default requirements" do
+        result = subject.metadata_dependency("Ruby", Gem::Requirement.default)
+        expect(result).to be_nil
+        expect(subject.metadata_dependency("RubyGems", Gem::Requirement.default)).to be_nil
+      end
     end
 
-    it "returns a Gem::Dependency for a non-default, non-nil requirement" do
-      req = Gem::Requirement.new("~> 2.5")
-      dep = obj.metadata_dependency("TestName", req)
-      expect(dep).to be_a(Gem::Dependency)
-      expect(dep.name).to eq("TestName\0")
+    context "with a pessimistic version constraint" do
+      it "returns a Gem::Dependency with the correct null-byte name" do
+        req = Gem::Requirement.new("~> 2.5")
+        dep = subject.metadata_dependency("TestName", req)
+        expect(dep).to be_a(Gem::Dependency)
+        expect(dep.name).to eq("TestName\0")
+      end
     end
   end
 end
