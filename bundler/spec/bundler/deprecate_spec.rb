@@ -1,8 +1,13 @@
 # frozen_string_literal: true
 
+require "spec_helper"
+require "bundler/deprecate"
+
 RSpec.describe Bundler::Deprecate do
-  # Ensure skip state is clean before and after each test
-  # to prevent cross-test contamination
+  subject(:deprecate_module) { described_class }
+
+  # Ensure skip state is clean before and after each example
+  # to prevent cross-test contamination of the global skip flag
   around :each do |example|
     original_skip = described_class.skip
     described_class.skip = false
@@ -11,158 +16,127 @@ RSpec.describe Bundler::Deprecate do
     described_class.skip = original_skip
   end
 
+  describe "module identity" do
+    it "is defined as a constant under Bundler and responds to all expected class methods" do
+      expect(defined?(Bundler::Deprecate)).to eq("constant")
+      expect(deprecate_module).to respond_to(:skip)
+      expect(deprecate_module).to respond_to(:skip=)
+      expect(deprecate_module).to respond_to(:skip_during)
+    end
+
+    it "is aliased from Gem::Deprecate and shares identity" do
+      expect(described_class).to eq(Gem::Deprecate)
+      expect(described_class).to be(Gem::Deprecate)
+    end
+  end
+
   describe ".skip" do
-    it "returns false by default" do
+    it "returns false by default and is falsey" do
       expect(described_class.skip).to eq(false)
+      expect(described_class.skip).to be_falsey
     end
 
-    it "responds to the skip class method" do
-      expect(described_class).to respond_to(:skip)
-    end
-
-    it "returns the current skip flag value" do
+    it "reflects the value previously set via skip= and is truthy when true" do
       described_class.skip = true
       expect(described_class.skip).to eq(true)
+      expect(described_class.skip).to be_truthy
     end
   end
 
   describe ".skip=" do
-    it "responds to the skip= class method" do
-      expect(described_class).to respond_to(:skip=)
-    end
-
-    it "sets the skip flag to true" do
+    it "sets the skip flag to true and the value persists" do
       described_class.skip = true
       expect(described_class.skip).to eq(true)
+      expect(described_class.skip).to be(true)
     end
 
-    it "sets the skip flag to false" do
+    it "sets the skip flag back to false after it was true" do
       described_class.skip = true
       described_class.skip = false
       expect(described_class.skip).to eq(false)
+      expect(described_class.skip).to be_falsey
     end
 
-    it "accepts truthy values" do
+    it "accepts truthy and falsey non-boolean values" do
       described_class.skip = "yes"
       expect(described_class.skip).to be_truthy
-    end
-
-    it "accepts nil as a falsey value" do
       described_class.skip = nil
       expect(described_class.skip).to be_falsey
     end
   end
 
   describe ".skip_during" do
-    it "responds to the skip_during class method" do
-      expect(described_class).to respond_to(:skip_during)
-    end
-
-    it "sets skip to true inside the block" do
+    it "sets skip to true inside the block and restores to false after" do
       observed_skip = nil
       described_class.skip_during do
         observed_skip = described_class.skip
       end
       expect(observed_skip).to eq(true)
+      expect(described_class.skip).to eq(false)
     end
 
-    it "restores skip to false after the block when originally false" do
+    it "restores skip to false after block when originally false and returns block value" do
       described_class.skip = false
-      described_class.skip_during do
-        # inside block, skip is true
-      end
+      result = described_class.skip_during { "work" }
       expect(described_class.skip).to eq(false)
+      expect(result).to eq("work")
     end
 
-    it "restores skip to true after the block when originally true" do
+    it "restores skip to true after block when originally true and returns block value" do
       described_class.skip = true
-      described_class.skip_during do
-        # inside block, skip is true
-      end
+      result = described_class.skip_during { "done" }
       expect(described_class.skip).to eq(true)
+      expect(result).to eq("done")
     end
 
-    it "returns the value of the block" do
-      result = described_class.skip_during { 42 }
-      expect(result).to eq(42)
+    it "returns the block return value for various types" do
+      expect(described_class.skip_during { 42 }).to eq(42)
+      expect(described_class.skip_during { "hello" }).to eq("hello")
     end
 
-    it "returns the block value for string results" do
-      result = described_class.skip_during { "hello" }
-      expect(result).to eq("hello")
-    end
-
-    it "returns nil when block returns nil" do
-      result = described_class.skip_during { nil }
-      expect(result).to be_nil
-    end
-
-    it "restores skip to false even when block raises an exception" do
-      described_class.skip = false
-      begin
+    it "handles nested skip_during calls and restores to the original value" do
+      outer_skip = nil
+      inner_skip = nil
+      described_class.skip_during do
+        outer_skip = described_class.skip
         described_class.skip_during do
-          raise RuntimeError, "test error"
+          inner_skip = described_class.skip
         end
-      rescue RuntimeError
-        # expected
       end
+      expect(outer_skip).to eq(true)
+      expect(inner_skip).to eq(true)
       expect(described_class.skip).to eq(false)
     end
 
-    it "restores skip to true even when block raises an exception" do
-      described_class.skip = true
-      begin
-        described_class.skip_during do
-          raise RuntimeError, "test error"
-        end
-      rescue RuntimeError
-        # expected
-      end
-      expect(described_class.skip).to eq(true)
-    end
-
-    it "propagates exceptions raised inside the block" do
-      expect do
-        described_class.skip_during do
-          raise ArgumentError, "bad argument"
-        end
-      end.to raise_error(ArgumentError, "bad argument")
-    end
-
-    it "allows nested skip_during calls" do
-      outer_during = nil
-      inner_during = nil
-
-      described_class.skip_during do
-        outer_during = described_class.skip
-        described_class.skip_during do
-          inner_during = described_class.skip
-        end
+    context "skip flag behavior on exceptions" do
+      it "restores skip to false when block raises and propagates the error" do
+        described_class.skip = false
+        expect do
+          described_class.skip_during { raise RuntimeError, "test error" }
+        end.to raise_error(RuntimeError, "test error")
+        expect(described_class.skip).to eq(false)
       end
 
-      expect(outer_during).to eq(true)
-      expect(inner_during).to eq(true)
-      expect(described_class.skip).to eq(false)
-    end
-  end
+      it "restores skip to true when block raises and propagates the error" do
+        described_class.skip = true
+        expect do
+          described_class.skip_during { raise ArgumentError, "bad argument" }
+        end.to raise_error(ArgumentError, "bad argument")
+        expect(described_class.skip).to eq(true)
+      end
 
-  describe "module identity" do
-    it "is defined as a constant under Bundler" do
-      expect(defined?(Bundler::Deprecate)).to eq("constant")
-    end
-
-    it "is the same object as Gem::Deprecate when Gem::Deprecate exists" do
-      if defined?(Gem::Deprecate)
-        expect(described_class).to eq(Gem::Deprecate)
+      it "does not corrupt skip state after multiple sequential calls" do
+        described_class.skip = false
+        3.times { described_class.skip_during { "work" } }
+        expect(described_class.skip).to eq(false)
+        expect(described_class.skip).to be_falsey
       end
     end
   end
 
-  describe "deprecation warning integration" do
-    # Use a fresh anonymous class for each test to avoid polluting
-    # global state with deprecated method definitions
+  context "warning emission" do
     let(:test_class) do
-      klass = Class.new do
+      Class.new do
         def old_method
           "old result"
         end
@@ -170,38 +144,105 @@ RSpec.describe Bundler::Deprecate do
         extend Bundler::Deprecate
         deprecate :old_method, "new_method", 2099, 1
       end
-      klass
+    end
+
+    before do
+      described_class.skip = false
+    end
+
+    after do
+      described_class.skip = false
+    end
+
+    it "emits deprecation warnings to stderr when skip is false" do
+      instance = test_class.new
+      allow($stderr).to receive(:write).and_call_original
+      expect { instance.old_method }.to output(/deprecated/).to_stderr
+      expect { instance.old_method }.to output(/new_method/).to_stderr
     end
 
     it "suppresses deprecation warnings when skip is true" do
       described_class.skip = true
       instance = test_class.new
       expect { instance.old_method }.not_to output.to_stderr
+      expect(instance.old_method).to eq("old result")
     end
 
-    it "emits deprecation warnings when skip is false" do
-      described_class.skip = false
-      instance = test_class.new
-      expect { instance.old_method }.to output(/deprecated/).to_stderr
-    end
-
-    it "suppresses warnings inside skip_during block" do
-      described_class.skip = false
+    it "suppresses warnings inside skip_during block and resumes after" do
       instance = test_class.new
       described_class.skip_during do
         expect { instance.old_method }.not_to output.to_stderr
       end
+      expect { instance.old_method }.to output(/deprecated/).to_stderr
     end
 
-    it "preserves the return value of the deprecated method" do
+    it "preserves the return value of the deprecated method regardless of skip" do
       described_class.skip = true
       instance = test_class.new
       expect(instance.old_method).to eq("old result")
+      expect(instance.old_method).to be_truthy
+    end
+  end
+
+  context "replacement indication" do
+    let(:test_class_with_replacement) do
+      Class.new do
+        def legacy_method
+          "legacy"
+        end
+
+        extend Bundler::Deprecate
+        deprecate :legacy_method, "modern_method", 2099, 6
+      end
+    end
+
+    let(:test_class_no_replacement) do
+      Class.new do
+        def obsolete_method
+          "obsolete"
+        end
+
+        extend Bundler::Deprecate
+        deprecate :obsolete_method, :none, 2099, 6
+      end
+    end
+
+    before do
+      described_class.skip = false
+    end
+
+    after do
+      described_class.skip = false
+    end
+
+    it "references the replacement method name in the warning message" do
+      instance = test_class_with_replacement.new
+      allow($stderr).to receive(:write).and_call_original
+      expect { instance.legacy_method }.to output(/use modern_method instead/).to_stderr
+      expect { instance.legacy_method }.to output(/deprecated/).to_stderr
+    end
+
+    it "indicates no replacement when :none is specified" do
+      instance = test_class_no_replacement.new
+      expect { instance.obsolete_method }.to output(/no replacement/).to_stderr
+      expect { instance.obsolete_method }.to output(/deprecated/).to_stderr
+    end
+
+    it "includes the target date in the deprecation message" do
+      instance = test_class_with_replacement.new
+      expect { instance.legacy_method }.to output(/2099/).to_stderr
+      expect { instance.legacy_method }.to output(/06/).to_stderr
+    end
+
+    it "preserves return values of deprecated methods regardless of replacement type" do
+      described_class.skip = true
+      expect(test_class_with_replacement.new.legacy_method).to eq("legacy")
+      expect(test_class_no_replacement.new.obsolete_method).to eq("obsolete")
     end
   end
 
   describe "skip state transitions" do
-    it "transitions from false to true to false correctly" do
+    it "transitions from false to true to false in sequence" do
       expect(described_class.skip).to eq(false)
       described_class.skip = true
       expect(described_class.skip).to eq(true)
@@ -212,17 +253,9 @@ RSpec.describe Bundler::Deprecate do
     it "handles rapid toggling without state corruption" do
       10.times do
         described_class.skip = true
-        expect(described_class.skip).to eq(true)
+        expect(described_class.skip).to be(true)
         described_class.skip = false
-        expect(described_class.skip).to eq(false)
-      end
-    end
-
-    it "skip_during does not affect skip flag when called multiple times" do
-      described_class.skip = false
-      3.times do
-        described_class.skip_during { "work" }
-        expect(described_class.skip).to eq(false)
+        expect(described_class.skip).to be(false)
       end
     end
   end
