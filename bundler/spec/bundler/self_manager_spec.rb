@@ -43,6 +43,8 @@ RSpec.describe Bundler::SelfManager do
         allow(Bundler).to receive(:gem_version).and_return(Gem::Version.new("2.3.0"))
         allow(Bundler).to receive(:configure)
         allow(Bundler.rubygems).to receive(:find_bundler).with("2.4.0").and_return(true)
+        # Stub private method that checks $PROGRAM_NAME != "-e" (false when running via ruby -e)
+        allow(self_manager).to receive(:ruby_can_restart_with_same_arguments?).and_return(true)
       end
 
       it "calls restart_with with the version" do
@@ -90,6 +92,8 @@ RSpec.describe Bundler::SelfManager do
         allow(Bundler::LockfileParser).to receive(:bundled_with).and_return(version_str)
         allow(Bundler).to receive(:gem_version).and_return(Gem::Version.new("2.3.0"))
         allow(Bundler).to receive(:configure)
+        # Stub private method that checks $PROGRAM_NAME != "-e" (false when running via ruby -e)
+        allow(self_manager).to receive(:ruby_can_restart_with_same_arguments?).and_return(true)
       end
 
       it "displays the lockfile version message via Bundler.ui" do
@@ -113,6 +117,8 @@ RSpec.describe Bundler::SelfManager do
         allow(Bundler::LockfileParser).to receive(:bundled_with).and_return("2.4.0")
         allow(Bundler).to receive(:gem_version).and_return(Gem::Version.new("2.3.0"))
         allow(Bundler).to receive(:configure)
+        # Stub private method that checks $PROGRAM_NAME != "-e" (false when running via ruby -e)
+        allow(self_manager).to receive(:ruby_can_restart_with_same_arguments?).and_return(true)
       end
 
       it "displays the configuration version message via Bundler.ui" do
@@ -250,6 +256,8 @@ RSpec.describe Bundler::SelfManager do
         allow(Bundler::SharedHelpers).to receive(:in_bundle?).and_return(true)
         allow(Bundler).to receive(:gem_version).and_return(Gem::Version.new("2.3.0"))
         allow(Bundler::LockfileParser).to receive(:bundled_with).and_return("2.4.0")
+        # Stub private method that checks $PROGRAM_NAME != "-e" (false when running via ruby -e)
+        allow(self_manager).to receive(:ruby_can_restart_with_same_arguments?).and_return(true)
 
         version = Gem::Version.new("2.4.0")
         result = self_manager.send(:needs_switching?, version)
@@ -402,6 +410,8 @@ RSpec.describe Bundler::SelfManager do
           allow(Bundler.settings).to receive(:[]).with(:version).and_return("lockfile")
           allow(Bundler::LockfileParser).to receive(:bundled_with).and_return("2.4.0")
           allow(Bundler).to receive(:gem_version).and_return(Gem::Version.new("2.3.0"))
+          # Stub private method that checks $PROGRAM_NAME != "-e" (false when running via ruby -e)
+          allow(self_manager).to receive(:ruby_can_restart_with_same_arguments?).and_return(true)
 
           result = self_manager.send(:find_restart_version)
           expect(result).to eq(Gem::Version.new("2.4.0"))
@@ -414,6 +424,8 @@ RSpec.describe Bundler::SelfManager do
           allow(Bundler.settings).to receive(:[]).with(:version).and_return("2.5.0")
           allow(Bundler::LockfileParser).to receive(:bundled_with).and_return("2.4.0")
           allow(Bundler).to receive(:gem_version).and_return(Gem::Version.new("2.3.0"))
+          # Stub private method that checks $PROGRAM_NAME != "-e" (false when running via ruby -e)
+          allow(self_manager).to receive(:ruby_can_restart_with_same_arguments?).and_return(true)
 
           result = self_manager.send(:find_restart_version)
           expect(result).to eq(Gem::Version.new("2.5.0"))
