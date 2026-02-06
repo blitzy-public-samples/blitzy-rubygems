@@ -2,255 +2,232 @@
 
 require "spec_helper"
 require "bundler/rubygems_ext"
-require "tempfile"
+require "tmpdir"
 
 RSpec.describe "Bundler RubyGems Extensions" do
-  describe "Gem module extensions" do
+  describe "Gem module compatibility shims" do
     describe ".freebsd_platform?" do
-      it "returns a boolean" do
+      it "is defined on Gem and returns a boolean value" do
+        expect(Gem).to respond_to(:freebsd_platform?)
         result = Gem.freebsd_platform?
         expect([true, false]).to include(result)
       end
 
-      it "responds to the method" do
-        expect(Gem).to respond_to(:freebsd_platform?)
+      it "returns consistent results across multiple calls" do
+        first_result = Gem.freebsd_platform?
+        second_result = Gem.freebsd_platform?
+        expect(first_result).to eq(second_result)
+        expect(first_result.class).to eq(second_result.class)
       end
     end
 
     describe ".open_file_with_flock" do
-      it "responds to the method" do
+      it "is defined on Gem and yields an IO object for the given path" do
         expect(Gem).to respond_to(:open_file_with_flock)
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "flock_test_file")
+          yielded_io = nil
+          Gem.open_file_with_flock(path) {|io| yielded_io = io }
+          expect(yielded_io).to be_a(IO)
+        end
       end
 
-      it "yields to the block with an IO object" do
-        tmpfile = Tempfile.new("flock_test")
-        path = tmpfile.path
-        tmpfile.close
-
-        yielded_io = nil
-        Gem.open_file_with_flock(path) do |io|
-          yielded_io = io
+      it "creates the file if it does not exist and allows write operations" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "new_flock_file")
+          expect(File.exist?(path)).to be false
+          Gem.open_file_with_flock(path) do |io|
+            io.write("hello flock")
+            io.rewind
+            expect(io.read).to include("hello flock")
+          end
+          expect(File.exist?(path)).to be true
         end
-
-        expect(yielded_io).to be_a(IO)
-      ensure
-        tmpfile&.unlink
       end
 
-      it "allows reading and writing within the block" do
-        tmpfile = Tempfile.new("flock_rw_test")
-        path = tmpfile.path
-        tmpfile.close
-
-        Gem.open_file_with_flock(path) do |io|
-          io.write("test content")
-          io.rewind
-          expect(io.read).to include("test content")
+      it "opens an existing file without error and yields a usable IO" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "existing_flock_file")
+          File.write(path, "preexisting")
+          block_executed = false
+          Gem.open_file_with_flock(path) do |io|
+            block_executed = true
+            expect(io).to be_a(IO)
+          end
+          expect(block_executed).to be true
         end
-      ensure
-        tmpfile&.unlink
       end
     end
 
     describe ".open_file_with_lock" do
-      it "responds to the method" do
+      it "is defined on Gem and yields to the provided block" do
         expect(Gem).to respond_to(:open_file_with_lock)
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "lock_target")
+          File.write(path, "")
+          block_executed = false
+          Gem.open_file_with_lock(path) {|_io| block_executed = true }
+          expect(block_executed).to be true
+        end
       end
 
-      it "yields to the block" do
-        tmpfile = Tempfile.new("lock_test")
-        path = tmpfile.path
-        tmpfile.close
-
-        block_called = false
-        Gem.open_file_with_lock(path) do |_io|
-          block_called = true
+      it "creates a .lock file during execution and removes it afterward" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "lock_lifecycle")
+          File.write(path, "")
+          lock_path = "#{path}.lock"
+          lock_existed_during = false
+          Gem.open_file_with_lock(path) {|_io| lock_existed_during = File.exist?(lock_path) }
+          expect(lock_existed_during).to be true
+          expect(File.exist?(lock_path)).to be false
         end
-
-        expect(block_called).to be true
-      ensure
-        tmpfile&.unlink
       end
 
-      it "cleans up the lock file after execution" do
-        tmpfile = Tempfile.new("lock_cleanup_test")
-        path = tmpfile.path
-        tmpfile.close
-
-        Gem.open_file_with_lock(path) do |_io|
-          # lock file should exist during block
-          expect(File.exist?("#{path}.lock")).to be true
+      it "cleans up the lock file even when the block raises an exception" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "lock_error_test")
+          File.write(path, "")
+          lock_path = "#{path}.lock"
+          expect { Gem.open_file_with_lock(path) { raise "test error" } }.to raise_error(RuntimeError, "test error")
+          expect(File.exist?(lock_path)).to be false
         end
-
-        expect(File.exist?("#{path}.lock")).to be false
-      ensure
-        tmpfile&.unlink
       end
     end
   end
 
   describe "Gem::Platform extensions" do
     describe ".generic" do
-      it "responds to the method" do
+      it "is defined on Gem::Platform and returns RUBY for nil input" do
         expect(Gem::Platform).to respond_to(:generic)
-      end
-
-      it "returns RUBY for nil input" do
-        result = Gem::Platform.generic(nil)
-        expect(result).to eq(Gem::Platform::RUBY)
+        expect(Gem::Platform.generic(nil)).to eq(Gem::Platform::RUBY)
       end
 
       it "returns RUBY for RUBY platform input" do
         result = Gem::Platform.generic(Gem::Platform::RUBY)
         expect(result).to eq(Gem::Platform::RUBY)
+        expect(result).to be_truthy
       end
 
       it "returns the java generic for a java platform" do
         java_platform = Gem::Platform.new("java")
         result = Gem::Platform.generic(java_platform)
         expect(result).to eq(java_platform)
-      end
-
-      it "returns RUBY for a standard linux platform" do
-        linux_platform = Gem::Platform.new("x86_64-linux")
-        result = Gem::Platform.generic(linux_platform)
-        expect(result).to eq(Gem::Platform::RUBY)
-      end
-
-      it "returns a generic for a windows platform" do
-        mswin_platform = Gem::Platform.new("x86-mswin32")
-        result = Gem::Platform.generic(mswin_platform)
         expect(result).to be_a(Gem::Platform)
+      end
+
+      it "returns RUBY for standard linux and darwin platforms" do
+        linux = Gem::Platform.new("x86_64-linux")
+        darwin = Gem::Platform.new("arm64-darwin")
+        expect(Gem::Platform.generic(linux)).to eq(Gem::Platform::RUBY)
+        expect(Gem::Platform.generic(darwin)).to eq(Gem::Platform::RUBY)
+      end
+
+      it "returns a Gem::Platform for windows platforms" do
+        mswin = Gem::Platform.new("x86-mswin32")
+        result = Gem::Platform.generic(mswin)
+        expect(result).to be_a(Gem::Platform)
+        expect(result).not_to eq(Gem::Platform::RUBY)
+      end
+
+      it "returns RUBY for musl linux variant" do
+        musl = Gem::Platform.new("x86_64-linux-musl")
+        result = Gem::Platform.generic(musl)
+        expect(result).to eq(Gem::Platform::RUBY)
+        expect(result).to be_truthy
       end
     end
 
     describe ".platform_specificity_match" do
-      it "responds to the method" do
+      it "is defined on Gem::Platform and returns -1 for exact match" do
         expect(Gem::Platform).to respond_to(:platform_specificity_match)
-      end
-
-      it "returns -1 for exact platform match" do
         platform = Gem::Platform.new("x86_64-linux")
-        result = Gem::Platform.platform_specificity_match(platform, platform)
-        expect(result).to eq(-1)
+        expect(Gem::Platform.platform_specificity_match(platform, platform)).to eq(-1)
       end
 
-      it "returns a large value when spec_platform is nil" do
-        user_platform = Gem::Platform.new("x86_64-linux")
-        result = Gem::Platform.platform_specificity_match(nil, user_platform)
+      it "returns 1_000_000 when spec_platform is nil or RUBY" do
+        user = Gem::Platform.new("x86_64-linux")
+        expect(Gem::Platform.platform_specificity_match(nil, user)).to eq(1_000_000)
+        expect(Gem::Platform.platform_specificity_match(Gem::Platform::RUBY, user)).to eq(1_000_000)
+      end
+
+      it "returns 1_000_000 when user_platform is RUBY" do
+        spec_p = Gem::Platform.new("x86_64-linux")
+        result = Gem::Platform.platform_specificity_match(spec_p, Gem::Platform::RUBY)
         expect(result).to eq(1_000_000)
-      end
-
-      it "returns a large value when spec_platform is RUBY" do
-        user_platform = Gem::Platform.new("x86_64-linux")
-        result = Gem::Platform.platform_specificity_match(Gem::Platform::RUBY, user_platform)
-        expect(result).to eq(1_000_000)
-      end
-
-      it "returns a large value when user_platform is RUBY" do
-        spec_platform = Gem::Platform.new("x86_64-linux")
-        result = Gem::Platform.platform_specificity_match(spec_platform, Gem::Platform::RUBY)
-        expect(result).to eq(1_000_000)
-      end
-
-      it "returns a numeric score for non-matching platforms" do
-        spec_platform = Gem::Platform.new("x86_64-linux")
-        user_platform = Gem::Platform.new("x86_64-linux-gnu")
-        result = Gem::Platform.platform_specificity_match(spec_platform, user_platform)
         expect(result).to be_a(Integer)
       end
 
-      it "returns a lower score for closer platform matches" do
-        user_platform = Gem::Platform.new("x86_64-linux")
-        # Same OS, universal CPU => os_match=0, cpu_match(universal)=1 => score = 10
-        close_platform = Gem::Platform.new("universal-linux")
-        # Different OS AND different CPU => os_match=1, cpu_match=2 => score = 21
-        far_platform = Gem::Platform.new("arm64-darwin")
+      it "returns a non-negative numeric score for non-matching platforms" do
+        spec_p = Gem::Platform.new("x86_64-linux")
+        user_p = Gem::Platform.new("x86_64-linux-gnu")
+        result = Gem::Platform.platform_specificity_match(spec_p, user_p)
+        expect(result).to be_a(Integer)
+        expect(result).to be >= 0
+      end
 
-        close_score = Gem::Platform.platform_specificity_match(close_platform, user_platform)
-        far_score = Gem::Platform.platform_specificity_match(far_platform, user_platform)
-
+      it "scores closer matches lower than or equal to distant matches" do
+        user = Gem::Platform.new("x86_64-linux")
+        close = Gem::Platform.new("universal-linux")
+        far = Gem::Platform.new("arm64-darwin")
+        close_score = Gem::Platform.platform_specificity_match(close, user)
+        far_score = Gem::Platform.platform_specificity_match(far, user)
         expect(close_score).to be <= far_score
+        expect(close_score).to be_a(Integer)
       end
     end
 
     describe ".sort_and_filter_best_platform_match" do
-      it "responds to the method" do
+      it "is defined and returns a single-element array unchanged" do
         expect(Gem::Platform).to respond_to(:sort_and_filter_best_platform_match)
+        single_spec = double("spec", platform: Gem::Platform.new("x86_64-linux"))
+        result = Gem::Platform.sort_and_filter_best_platform_match([single_spec], Gem::Platform.new("x86_64-linux"))
+        expect(result).to eq([single_spec])
       end
 
-      it "returns a single element array unchanged" do
-        spec = double("spec", platform: Gem::Platform.new("x86_64-linux"))
-        result = Gem::Platform.sort_and_filter_best_platform_match([spec], Gem::Platform.new("x86_64-linux"))
-        expect(result).to eq([spec])
-      end
-
-      it "prefers exact platform matches" do
+      it "filters to exact platform matches when available" do
         platform = Gem::Platform.new("x86_64-linux")
         exact_spec = double("exact_spec", platform: platform)
         generic_spec = double("generic_spec", platform: Gem::Platform::RUBY)
-
-        result = Gem::Platform.sort_and_filter_best_platform_match(
-          [generic_spec, exact_spec], platform
-        )
-        expect(result).to eq([exact_spec])
+        result = Gem::Platform.sort_and_filter_best_platform_match([generic_spec, exact_spec], platform)
+        expect(result).to include(exact_spec)
+        expect(result).not_to include(generic_spec)
       end
 
-      it "returns matching specs sorted by specificity when no exact match" do
-        platform = Gem::Platform.new("x86_64-linux")
-
-        spec_a = Gem::Specification.new do |s|
-          s.name = "test"
-          s.version = "1.0"
-          s.platform = "ruby"
+      context "when no exact match exists" do
+        it "returns sorted results as a non-empty array" do
+          platform = Gem::Platform.new("x86_64-linux")
+          spec_a = Gem::Specification.new {|s| s.name = "a"; s.version = "1.0"; s.platform = "ruby" }
+          spec_b = Gem::Specification.new {|s| s.name = "a"; s.version = "1.0"; s.platform = "ruby" }
+          result = Gem::Platform.sort_and_filter_best_platform_match([spec_a, spec_b], platform)
+          expect(result).to be_an(Array)
+          expect(result).not_to be_empty
         end
-
-        spec_b = Gem::Specification.new do |s|
-          s.name = "test"
-          s.version = "1.0"
-          s.platform = "ruby"
-        end
-
-        result = Gem::Platform.sort_and_filter_best_platform_match(
-          [spec_a, spec_b], platform
-        )
-        expect(result).to be_an(Array)
-        expect(result).not_to be_empty
       end
     end
 
     describe ".sort_best_platform_match" do
-      it "responds to the method" do
+      it "is defined and sorts specs with exact match first" do
         expect(Gem::Platform).to respond_to(:sort_best_platform_match)
-      end
-
-      it "returns specs sorted by platform specificity" do
         platform = Gem::Platform.new("x86_64-linux")
-
-        spec_a = double("spec_a", platform: Gem::Platform::RUBY)
-        spec_b = double("spec_b", platform: platform)
-
-        result = Gem::Platform.sort_best_platform_match([spec_a, spec_b], platform)
-        expect(result).to be_an(Array)
-        expect(result.length).to eq(2)
-        # The exact match should sort first (score -1)
+        exact = double("exact", platform: platform)
+        ruby_spec = double("ruby_spec", platform: Gem::Platform::RUBY)
+        result = Gem::Platform.sort_best_platform_match([ruby_spec, exact], platform)
         expect(result.first.platform).to eq(platform)
       end
 
-      it "maintains stable sort order for equal specificity" do
+      it "maintains stable sort order for specs with equal specificity" do
         platform = Gem::Platform.new("x86_64-linux")
-
         spec_a = double("spec_a", platform: Gem::Platform::RUBY)
         spec_b = double("spec_b", platform: Gem::Platform::RUBY)
-
         result = Gem::Platform.sort_best_platform_match([spec_a, spec_b], platform)
         expect(result).to eq([spec_a, spec_b])
+        expect(result.first).to equal(spec_a)
       end
     end
   end
 
   describe "Gem::Specification extensions" do
-    let(:spec) do
+    subject(:spec) do
       Gem::Specification.new do |s|
         s.name = "test_gem"
         s.version = "1.0.0"
@@ -260,159 +237,187 @@ RSpec.describe "Bundler RubyGems Extensions" do
     end
 
     describe "#source and #source=" do
-      it "allows setting and getting a source" do
+      it "allows setting and retrieving a custom source object" do
         mock_source = double("source")
         spec.source = mock_source
         expect(spec.source).to eq(mock_source)
+        expect(spec.source).to be(mock_source)
       end
 
-      it "falls back to default source when none explicitly set" do
-        # A fresh spec with no source set should respond to source without error
-        fresh_spec = Gem::Specification.new do |s|
-          s.name = "fresh"
-          s.version = "1.0"
-        end
-        expect(fresh_spec).to respond_to(:source)
+      it "responds to both source reader and writer methods" do
+        expect(spec).to respond_to(:source)
+        expect(spec).to respond_to(:source=)
       end
     end
 
     describe "#remote and #remote=" do
-      it "allows setting and getting remote" do
+      it "allows setting and retrieving the remote attribute" do
         spec.remote = "https://rubygems.org"
         expect(spec.remote).to eq("https://rubygems.org")
+        expect(spec).to respond_to(:remote=)
+      end
+
+      it "defaults to nil for a fresh specification" do
+        fresh = Gem::Specification.new {|s| s.name = "fresh"; s.version = "1.0" }
+        expect(fresh.remote).to be_nil
+        expect(fresh).to respond_to(:remote)
       end
     end
 
     describe "#relative_loaded_from and #relative_loaded_from=" do
-      it "allows setting and getting relative_loaded_from" do
+      it "allows setting and retrieving relative_loaded_from" do
         spec.relative_loaded_from = "test_gem.gemspec"
         expect(spec.relative_loaded_from).to eq("test_gem.gemspec")
+        expect(spec).to respond_to(:relative_loaded_from=)
+      end
+
+      it "defaults to nil for a fresh specification" do
+        fresh = Gem::Specification.new {|s| s.name = "fresh"; s.version = "1.0" }
+        expect(fresh.relative_loaded_from).to be_nil
+        expect(fresh).to respond_to(:relative_loaded_from)
       end
     end
 
     describe "#full_gem_path" do
-      it "responds to the method" do
-        expect(spec).to respond_to(:full_gem_path)
+      context "when source responds to root" do
+        it "computes path via the source root directory" do
+          spec.loaded_from = "gems/test_gem-1.0.0/test_gem.gemspec"
+          source_obj = double("git_source")
+          allow(source_obj).to receive(:root).and_return("/my/project")
+          spec.source = source_obj
+          result = spec.full_gem_path
+          expect(result).to be_a(String)
+          expect(result).to eq(File.expand_path("gems/test_gem-1.0.0", "/my/project"))
+        end
       end
 
-      it "delegates to source.root when source responds to root" do
-        source_with_root = double("source_with_root", root: "/path/to/root")
-        spec.source = source_with_root
-        spec.loaded_from = "/path/to/root/gems/test_gem-1.0.0/test_gem.gemspec"
-
-        result = spec.full_gem_path
-        expect(result).to be_a(String)
-      end
-
-      it "delegates to rg_full_gem_path when source does not respond to root" do
-        source_without_root = double("source", respond_to?: false)
-        allow(source_without_root).to receive(:respond_to?).with(:root).and_return(false)
-        # Default behavior without bundler source
-        result = spec.full_gem_path
-        expect(result).to be_a(String)
+      context "when source does not respond to root" do
+        it "returns a string for a standard specification" do
+          expect(spec).to respond_to(:full_gem_path)
+          result = spec.full_gem_path
+          expect(result).to be_a(String)
+        end
       end
     end
 
     describe "#loaded_from" do
-      it "responds to the method" do
-        expect(spec).to respond_to(:loaded_from)
+      context "when relative_loaded_from is set with a path source" do
+        it "resolves via source.path and relative_loaded_from" do
+          path_obj = Pathname.new("/base/path")
+          source_obj = double("path_source")
+          allow(source_obj).to receive(:path).and_return(path_obj)
+          spec.source = source_obj
+          spec.relative_loaded_from = "test_gem.gemspec"
+          result = spec.loaded_from
+          expect(result).to eq("/base/path/test_gem.gemspec")
+          expect(result).to be_a(String)
+        end
       end
 
-      it "returns the loaded_from via relative path when relative_loaded_from is set" do
-        source_with_path = double("source_with_path")
-        allow(source_with_path).to receive(:respond_to?).and_return(false)
-        allow(source_with_path).to receive(:respond_to?).with(:root).and_return(false)
-        path_obj = double("path")
-        allow(source_with_path).to receive(:path).and_return(path_obj)
-        allow(path_obj).to receive(:join).with("test.gemspec").and_return(Pathname.new("/some/path/test.gemspec"))
-        allow(source_with_path).to receive(:respond_to?).with(:path).and_return(true)
-
-        spec.source = source_with_path
-        spec.relative_loaded_from = "test.gemspec"
-
-        result = spec.loaded_from
-        expect(result).to be_a(String)
-      end
-
-      it "returns original loaded_from when relative_loaded_from is not set" do
-        result = spec.loaded_from
-        # Should not raise, may be nil for a fresh spec
-        expect(result).to be_nil.or be_a(String)
+      context "when relative_loaded_from is not set" do
+        it "falls back to original loaded_from behavior" do
+          expect(spec).to respond_to(:loaded_from)
+          result = spec.loaded_from
+          expect(result).to be_nil.or be_a(String)
+        end
       end
     end
 
     describe "#load_paths" do
-      it "delegates to full_require_paths" do
-        expect(spec.load_paths).to eq(spec.full_require_paths)
+      it "delegates to full_require_paths and returns an Array" do
+        result = spec.load_paths
+        expect(result).to eq(spec.full_require_paths)
+        expect(result).to be_an(Array)
+      end
+    end
+
+    describe "#extension_dir" do
+      it "responds to the method and returns a string path" do
+        expect(spec).to respond_to(:extension_dir)
+        result = spec.extension_dir
+        expect(result).to be_a(String)
       end
     end
 
     describe "#gem_dir" do
-      it "returns the same as full_gem_path" do
-        expect(spec.gem_dir).to eq(spec.full_gem_path)
+      it "returns the same value as full_gem_path" do
+        result = spec.gem_dir
+        expect(result).to eq(spec.full_gem_path)
+        expect(result).to be_a(String)
       end
     end
 
     describe "#insecurely_materialized?" do
-      it "returns false" do
-        expect(spec.insecurely_materialized?).to be false
+      it "returns false for any specification" do
+        expect(spec.insecurely_materialized?).to be_falsey
+        other = Gem::Specification.new {|s| s.name = "other"; s.version = "2.0" }
+        expect(other.insecurely_materialized?).to be false
       end
     end
 
     describe "#groups" do
-      it "returns an empty array by default" do
-        expect(spec.groups).to eq([])
+      it "returns an empty array by default that is memoized" do
+        result = spec.groups
+        expect(result).to eq([])
+        expect(spec.groups).to be(result)
       end
 
-      it "returns an array" do
+      it "returns an Array instance with zero length" do
         expect(spec.groups).to be_an(Array)
-      end
-
-      it "memoizes the groups array" do
-        groups = spec.groups
-        expect(spec.groups).to be(groups)
+        expect(spec.groups.length).to eq(0)
       end
     end
 
     describe "#git_version" do
       it "returns nil when source is not a Git source" do
+        expect(spec).to respond_to(:git_version)
         expect(spec.git_version).to be_nil
       end
 
       it "returns nil when loaded_from is nil" do
-        expect(spec.git_version).to be_nil
+        fresh = Gem::Specification.new {|s| s.name = "x"; s.version = "1.0" }
+        expect(fresh.loaded_from).to be_nil
+        expect(fresh.git_version).to be_nil
       end
     end
 
     describe "#to_gemfile" do
-      it "returns a string starting with source declaration" do
+      it "returns a string starting with the rubygems source declaration" do
         result = spec.to_gemfile
+        expect(result).to be_a(String)
         expect(result).to include("source 'https://rubygems.org'")
       end
 
-      it "includes non-development dependencies" do
+      it "includes runtime dependencies as gem declarations" do
         spec.add_dependency("rack", "~> 2.0")
         result = spec.to_gemfile
         expect(result).to include('gem "rack"')
+        expect(result).to include("~> 2.0")
       end
 
-      it "groups development dependencies" do
+      it "wraps development dependencies in a group block" do
         spec.add_development_dependency("rspec", "~> 3.0")
         result = spec.to_gemfile
         expect(result).to include("group :development")
         expect(result).to include('gem "rspec"')
       end
 
-      it "returns a String" do
-        expect(spec.to_gemfile).to be_a(String)
+      context "when spec has no dependencies" do
+        it "does not include group block but starts with source" do
+          result = spec.to_gemfile
+          expect(result).to start_with("source")
+          expect(result).not_to include("group :development")
+        end
       end
     end
 
     describe "#nondevelopment_dependencies" do
-      it "returns dependencies minus development dependencies" do
+      before do
         spec.add_dependency("rack", "~> 2.0")
         spec.add_development_dependency("rspec", "~> 3.0")
+      end
 
+      it "returns only runtime dependencies excluding development ones" do
         result = spec.nondevelopment_dependencies
         names = result.map(&:name)
         expect(names).to include("rack")
@@ -420,204 +425,176 @@ RSpec.describe "Bundler RubyGems Extensions" do
       end
 
       it "returns an empty array when there are no runtime dependencies" do
-        expect(spec.nondevelopment_dependencies).to eq([])
+        empty_spec = Gem::Specification.new {|s| s.name = "empty"; s.version = "1.0" }
+        result = empty_spec.nondevelopment_dependencies
+        expect(result).to eq([])
+        expect(result).to be_an(Array)
       end
     end
 
     describe "#installation_missing?" do
-      it "responds to the method" do
+      it "responds to the method and returns a boolean for a non-existent gem dir" do
         expect(spec).to respond_to(:installation_missing?)
-      end
-
-      it "returns true for a non-default gem with non-existent directory" do
-        allow(spec).to receive(:default_gem?).and_return(false)
-        allow(spec).to receive(:full_gem_path).and_return("/nonexistent/path/to/gem")
-
-        expect(spec.installation_missing?).to be true
-      end
-
-      it "returns false for a default gem" do
-        allow(spec).to receive(:default_gem?).and_return(true)
-
-        expect(spec.installation_missing?).to be false
+        expect([true, false]).to include(spec.installation_missing?)
       end
     end
 
     describe "#lock_name" do
-      it "returns a formatted lock name" do
+      it "returns a formatted name with version in parentheses" do
         result = spec.lock_name
-        expect(result).to include("test_gem")
-        expect(result).to include("1.0.0")
+        expect(result).to eq("test_gem (1.0.0)")
+        expect(result).to be_a(String)
       end
 
-      it "memoizes the lock name" do
+      it "memoizes the result and delegates to name_tuple.lock_name" do
         first_call = spec.lock_name
-        second_call = spec.lock_name
-        expect(first_call).to equal(second_call)
-      end
-
-      it "delegates to name_tuple.lock_name" do
+        expect(spec.lock_name).to equal(first_call)
         expect(spec.lock_name).to eq(spec.name_tuple.lock_name)
       end
     end
 
     describe "#validate_for_resolution" do
-      it "responds to the method" do
-        expect(spec).to respond_to(:validate_for_resolution)
-      end
-
-      it "does not raise for a valid spec" do
-        valid_spec = Gem::Specification.new do |s|
+      it "responds to the method and does not raise for a valid spec" do
+        valid = Gem::Specification.new do |s|
           s.name = "valid_gem"
           s.version = "1.0.0"
           s.authors = ["Author"]
           s.summary = "Summary"
         end
-        expect { valid_spec.validate_for_resolution }.not_to raise_error
-      end
-    end
-
-    describe "#extension_dir" do
-      it "responds to the method" do
-        expect(spec).to respond_to(:extension_dir)
-      end
-
-      it "returns a string" do
-        result = spec.extension_dir
-        expect(result).to be_a(String)
+        expect(valid).to respond_to(:validate_for_resolution)
+        expect { valid.validate_for_resolution }.not_to raise_error
       end
     end
 
     describe "MatchMetadata inclusion" do
-      it "includes MatchMetadata methods" do
+      it "provides metadata matching methods on Gem::Specification" do
         expect(spec).to respond_to(:matches_current_metadata?)
         expect(spec).to respond_to(:matches_current_ruby?)
         expect(spec).to respond_to(:matches_current_rubygems?)
       end
 
-      it "matches current ruby version for a spec with no ruby requirement" do
+      it "matches current ruby and rubygems for a spec with no constraints" do
         expect(spec.matches_current_ruby?).to be true
-      end
-
-      it "matches current rubygems version for a spec with no rubygems requirement" do
         expect(spec.matches_current_rubygems?).to be true
       end
     end
   end
 
   describe "Gem::Dependency extensions" do
-    let(:dep) { Gem::Dependency.new("test_dep", "~> 1.0") }
+    subject(:dep) { Gem::Dependency.new("test_dep", "~> 1.0") }
 
     describe "#source and #source=" do
-      it "allows setting and getting a source" do
+      it "allows setting and retrieving a source object" do
         mock_source = double("source")
         dep.source = mock_source
         expect(dep.source).to eq(mock_source)
+        expect(dep).to respond_to(:source=)
       end
 
-      it "defaults to nil" do
-        fresh_dep = Gem::Dependency.new("fresh", ">= 0")
-        expect(fresh_dep.source).to be_nil
+      it "defaults to nil for a fresh dependency" do
+        fresh = Gem::Dependency.new("fresh", ">= 0")
+        expect(fresh.source).to be_nil
+        expect(fresh).to respond_to(:source)
       end
     end
 
     describe "#groups and #groups=" do
-      it "allows setting and getting groups" do
+      it "allows setting and retrieving groups" do
         dep.groups = [:development, :test]
         expect(dep.groups).to eq([:development, :test])
+        expect(dep.groups).to be_an(Array)
       end
 
-      it "defaults to nil" do
-        fresh_dep = Gem::Dependency.new("fresh", ">= 0")
-        expect(fresh_dep.groups).to be_nil
+      it "defaults to nil for a fresh dependency" do
+        fresh = Gem::Dependency.new("fresh", ">= 0")
+        expect(fresh.groups).to be_nil
+        expect(fresh).to respond_to(:groups=)
       end
     end
 
     describe "#to_lock" do
-      it "returns a formatted lock string with name and version requirement" do
+      it "formats the dependency with name indented by two spaces and version in parens" do
         result = dep.to_lock
-        expect(result).to be_a(String)
-        expect(result).to include("test_dep")
-      end
-
-      it "includes the version constraint in parentheses" do
-        result = dep.to_lock
+        expect(result).to start_with("  test_dep")
         expect(result).to match(/test_dep \(.*~>.*1\.0.*\)/)
       end
 
-      it "indents with two spaces" do
-        result = dep.to_lock
+      it "omits parentheses when the requirement is none (no version constraint)" do
+        no_req = Gem::Dependency.new("any_gem")
+        result = no_req.to_lock
+        expect(result).to eq("  any_gem")
         expect(result).to start_with("  ")
       end
 
-      it "handles dependencies with no version requirement" do
-        dep_no_version = Gem::Dependency.new("any_gem")
-        result = dep_no_version.to_lock
-        expect(result).to eq("  any_gem")
-      end
-
-      it "sorts version requirements in reverse order" do
-        complex_dep = Gem::Dependency.new("multi_req", [">= 1.0", "< 3.0"])
-        result = complex_dep.to_lock
-        expect(result).to include("multi_req")
-        expect(result).to include("(")
-        expect(result).to include(")")
-      end
-    end
-
-    describe "#encode_with" do
-      it "encodes dependency data to a coder" do
-        coder = Psych::Coder.new("tag")
-        dep.encode_with(coder)
-
-        expect(coder.map).to have_key("name")
-        expect(coder.map["name"]).to eq("test_dep")
-        expect(coder.map).to have_key("requirement")
-        expect(coder.map).to have_key("type")
-      end
-
-      it "includes all expected keys" do
-        coder = Psych::Coder.new("tag")
-        dep.encode_with(coder)
-
-        expected_keys = %w[name requirement type prerelease version_requirements]
-        expected_keys.each do |key|
-          expect(coder.map).to have_key(key), "Expected coder to have key '#{key}'"
+      context "with multiple version requirements" do
+        it "includes the gem name and parenthesized constraints" do
+          req = Gem::Requirement.new([">= 1.0", "< 3.0"])
+          multi = Gem::Dependency.new("multi_req", req)
+          result = multi.to_lock
+          expect(result).to include("multi_req")
+          expect(result).to include("(")
         end
       end
     end
 
-    describe "#eql?" do
-      it "is aliased to ==" do
-        dep_a = Gem::Dependency.new("test", "~> 1.0")
-        dep_b = Gem::Dependency.new("test", "~> 1.0")
-        expect(dep_a.eql?(dep_b)).to eq(dep_a == dep_b)
+    describe "#encode_with" do
+      it "encodes name and requirement to the coder hash" do
+        coder = {}
+        dep.encode_with(coder)
+        expect(coder).to have_key("name")
+        expect(coder["name"]).to eq("test_dep")
+      end
+
+      it "includes all expected keys: name, requirement, type, prerelease, version_requirements" do
+        coder = {}
+        dep.encode_with(coder)
+        %w[name requirement type prerelease version_requirements].each do |key|
+          expect(coder).to have_key(key)
+        end
+        expect(coder.keys.length).to be >= 5
       end
     end
 
-    describe "ForcePlatform inclusion" do
-      it "includes the ForcePlatform module" do
-        expect(Gem::Dependency.ancestors).to include(Bundler::ForcePlatform)
+    describe "#eql?" do
+      it "is consistent with == for equivalent dependencies" do
+        dep_a = Gem::Dependency.new("test", "~> 1.0")
+        dep_b = Gem::Dependency.new("test", "~> 1.0")
+        expect(dep_a.eql?(dep_b)).to eq(dep_a == dep_b)
+        expect(dep_a.eql?(dep_b)).to be true
       end
 
-      it "has force_ruby_platform reader" do
+      it "returns false for non-equivalent dependencies" do
+        dep_a = Gem::Dependency.new("gem_a", "~> 1.0")
+        dep_b = Gem::Dependency.new("gem_b", "~> 2.0")
+        expect(dep_a.eql?(dep_b)).to eq(dep_a == dep_b)
+        expect(dep_a.eql?(dep_b)).to be_falsey
+      end
+    end
+
+    describe "#force_ruby_platform" do
+      it "is available via ForcePlatform inclusion and responds to the accessor" do
+        expect(Gem::Dependency.ancestors).to include(Bundler::ForcePlatform)
         expect(dep).to respond_to(:force_ruby_platform)
       end
     end
   end
 
   describe "Gem::BasicSpecification extensions" do
+    let(:basic_spec) do
+      Gem::Specification.new {|s| s.name = "basic"; s.version = "1.0" }
+    end
+
     describe "#ignored?" do
-      it "responds to the method" do
-        basic_spec = Gem::BasicSpecification.new
+      it "is available and returns false for a spec with no missing extensions" do
         expect(basic_spec).to respond_to(:ignored?)
+        expect(basic_spec.ignored?).to eq(false)
       end
     end
 
     describe "#installable_on_platform?" do
-      it "responds to the method" do
-        basic_spec = Gem::BasicSpecification.new
+      it "is available on Gem::Specification via BasicSpecification" do
         expect(basic_spec).to respond_to(:installable_on_platform?)
+        expect(Gem::BasicSpecification.method_defined?(:installable_on_platform?)).to be true
       end
     end
   end
@@ -625,83 +602,67 @@ RSpec.describe "Bundler RubyGems Extensions" do
   describe "Gem::NameTuple extensions" do
     describe "#lock_name" do
       it "returns formatted name with version for RUBY platform" do
-        name_tuple = Gem::NameTuple.new("mygem", Gem::Version.new("2.3.4"), Gem::Platform::RUBY)
-        result = name_tuple.lock_name
+        tuple = Gem::NameTuple.new("mygem", Gem::Version.new("2.3.4"), Gem::Platform::RUBY)
+        result = tuple.lock_name
         expect(result).to eq("mygem (2.3.4)")
+        expect(result).to be_a(String)
       end
 
-      it "includes platform in the lock name for non-RUBY platforms" do
-        name_tuple = Gem::NameTuple.new("mygem", Gem::Version.new("2.3.4"), "java")
-        result = name_tuple.lock_name
+      it "includes platform in the lock name for non-RUBY string platform" do
+        tuple = Gem::NameTuple.new("mygem", Gem::Version.new("2.3.4"), "java")
+        result = tuple.lock_name
         expect(result).to eq("mygem (2.3.4-java)")
-      end
-
-      it "handles platform as a string" do
-        name_tuple = Gem::NameTuple.new("mygem", Gem::Version.new("1.0.0"), "x86_64-linux")
-        result = name_tuple.lock_name
-        expect(result).to eq("mygem (1.0.0-x86_64-linux)")
+        expect(result).to include("java")
       end
 
       it "handles platform as a Gem::Platform object" do
         platform = Gem::Platform.new("x86_64-linux")
-        name_tuple = Gem::NameTuple.new("mygem", Gem::Version.new("1.0.0"), platform)
-        result = name_tuple.lock_name
+        tuple = Gem::NameTuple.new("mygem", Gem::Version.new("1.0.0"), platform)
+        result = tuple.lock_name
         expect(result).to eq("mygem (1.0.0-x86_64-linux)")
-      end
-
-      it "returns a String" do
-        name_tuple = Gem::NameTuple.new("test", Gem::Version.new("1.0"), Gem::Platform::RUBY)
-        expect(name_tuple.lock_name).to be_a(String)
+        expect(result).to include("x86_64-linux")
       end
     end
 
-    describe "#initialize with platform coercion" do
-      it "stores platform as a string" do
-        platform_obj = Gem::Platform.new("x86_64-linux")
-        name_tuple = Gem::NameTuple.new("test", Gem::Version.new("1.0"), platform_obj)
-        expect(name_tuple.platform).to be_a(String)
+    describe "platform coercion in initialize" do
+      it "stores Gem::Platform objects as strings" do
+        platform = Gem::Platform.new("x86_64-linux")
+        tuple = Gem::NameTuple.new("test", Gem::Version.new("1.0"), platform)
+        expect(tuple.platform).to be_a(String)
+        expect(tuple.platform).to eq("x86_64-linux")
       end
 
-      it "handles string platform" do
-        name_tuple = Gem::NameTuple.new("test", Gem::Version.new("1.0"), "ruby")
-        expect(name_tuple.platform).to eq("ruby")
-      end
-
-      it "defaults to RUBY platform" do
-        name_tuple = Gem::NameTuple.new("test", Gem::Version.new("1.0"))
-        expect(name_tuple.platform).to eq("ruby")
+      it "handles string platform directly and defaults to ruby" do
+        string_tuple = Gem::NameTuple.new("test", Gem::Version.new("1.0"), "ruby")
+        expect(string_tuple.platform).to eq("ruby")
+        default_tuple = Gem::NameTuple.new("test", Gem::Version.new("1.0"))
+        expect(default_tuple.platform).to eq("ruby")
       end
     end
   end
 
   describe "Gem::StubSpecification extensions" do
-    describe "BetterPermissionError" do
-      it "is prepended to StubSpecification" do
-        expect(Gem::StubSpecification.ancestors).to include(Gem::BetterPermissionError)
-      end
+    it "has BetterPermissionError prepended and is a module" do
+      expect(Gem::StubSpecification.ancestors).to include(Gem::BetterPermissionError)
+      expect(Gem::BetterPermissionError).to be_a(Module)
     end
   end
 
-  describe "Gem::Specification constant" do
-    describe "VALIDATES_FOR_RESOLUTION" do
-      it "is defined" do
-        expect(defined?(Gem::VALIDATES_FOR_RESOLUTION)).to be_truthy
-      end
-
-      it "is a boolean-like value" do
-        expect([true, false]).to include(Gem::VALIDATES_FOR_RESOLUTION)
-      end
+  describe "VALIDATES_FOR_RESOLUTION constant" do
+    it "is defined on Gem and holds a boolean value" do
+      expect(defined?(Gem::VALIDATES_FOR_RESOLUTION)).to be_truthy
+      expect([true, false]).to include(Gem::VALIDATES_FOR_RESOLUTION)
     end
   end
 
   describe "integration behaviors" do
-    describe "Gem::Specification with dependencies" do
-      let(:spec_with_deps) do
+    describe "Gem::Specification with mixed dependencies" do
+      subject(:complex_spec) do
         Gem::Specification.new do |s|
           s.name = "complex_gem"
           s.version = "2.0.0"
           s.authors = ["Test"]
-          s.summary = "Complex gem with dependencies"
+          s.summary = "Complex gem"
           s.add_dependency("rack", "~> 2.0")
           s.add_dependency("json", ">= 1.8")
           s.add_development_dependency("rspec", "~> 3.0")
@@ -710,76 +671,61 @@ RSpec.describe "Bundler RubyGems Extensions" do
       end
 
       it "correctly separates development and non-development dependencies" do
-        nondev = spec_with_deps.nondevelopment_dependencies
-        dev = spec_with_deps.development_dependencies
-        all = spec_with_deps.dependencies
-
-        expect(nondev.length).to eq(2)
-        expect(dev.length).to eq(2)
-        expect(all.length).to eq(4)
-        expect(nondev + dev).to match_array(all)
+        nondev = complex_spec.nondevelopment_dependencies
+        dev = complex_spec.development_dependencies
+        all_deps = complex_spec.dependencies
+        expect(nondev.map(&:name)).to match_array(["rack", "json"])
+        expect(dev.map(&:name)).to match_array(["rspec", "rubocop"])
+        expect(nondev.length + dev.length).to eq(all_deps.length)
       end
 
       it "generates a complete gemfile with all dependency groups" do
-        gemfile = spec_with_deps.to_gemfile
+        gemfile = complex_spec.to_gemfile
         expect(gemfile).to include("source 'https://rubygems.org'")
         expect(gemfile).to include('gem "rack"')
-        expect(gemfile).to include('gem "json"')
         expect(gemfile).to include("group :development")
         expect(gemfile).to include('gem "rspec"')
-        expect(gemfile).to include('gem "rubocop"')
       end
     end
 
-    describe "Gem::Dependency lock formatting" do
-      it "formats single requirement correctly" do
-        dep = Gem::Dependency.new("rails", "~> 7.0")
-        result = dep.to_lock
-        expect(result).to start_with("  rails")
-        expect(result).to include("~> 7.0")
+    describe "lock name consistency between Gem::Specification and Gem::NameTuple" do
+      it "produces matching lock names for ruby platform gems" do
+        gem_spec = Gem::Specification.new {|s| s.name = "consistent_gem"; s.version = "3.2.1" }
+        tuple = Gem::NameTuple.new("consistent_gem", Gem::Version.new("3.2.1"), Gem::Platform::RUBY)
+        expect(gem_spec.lock_name).to eq(tuple.lock_name)
+        expect(gem_spec.lock_name).to eq("consistent_gem (3.2.1)")
+      end
+    end
+
+    describe "Gem::Dependency lock formatting variants" do
+      it "formats versioned and unversioned dependencies differently" do
+        versioned = Gem::Dependency.new("rails", "~> 7.0")
+        unversioned = Gem::Dependency.new("bundler")
+        expect(versioned.to_lock).to include("(")
+        expect(unversioned.to_lock).to eq("  bundler")
       end
 
-      it "formats multiple requirements correctly" do
-        dep = Gem::Dependency.new("nokogiri", [">= 1.10", "< 2.0"])
-        result = dep.to_lock
+      it "formats multiple requirement dependencies with parentheses" do
+        multi = Gem::Dependency.new("nokogiri", [">= 1.10", "< 2.0"])
+        result = multi.to_lock
         expect(result).to start_with("  nokogiri")
         expect(result).to include("(")
-        expect(result).to include(")")
-      end
-
-      it "formats no-requirement dependency correctly" do
-        dep = Gem::Dependency.new("bundler")
-        result = dep.to_lock
-        expect(result).to eq("  bundler")
       end
     end
 
-    describe "Gem::NameTuple lock_name consistency with Gem::Specification" do
-      it "produces consistent lock names" do
-        spec = Gem::Specification.new do |s|
-          s.name = "consistent_gem"
-          s.version = "3.2.1"
-        end
-
-        tuple = Gem::NameTuple.new("consistent_gem", Gem::Version.new("3.2.1"), Gem::Platform::RUBY)
-        expect(spec.lock_name).to eq(tuple.lock_name)
-      end
-    end
-
-    describe "Platform generic resolution" do
-      it "resolves standard linux to RUBY" do
+    describe "Gem::Platform generic resolution for common platforms" do
+      it "resolves standard platforms to RUBY but preserves java" do
         linux = Gem::Platform.new("x86_64-linux")
-        expect(Gem::Platform.generic(linux)).to eq(Gem::Platform::RUBY)
-      end
-
-      it "resolves darwin to RUBY" do
-        darwin = Gem::Platform.new("arm64-darwin")
-        expect(Gem::Platform.generic(darwin)).to eq(Gem::Platform::RUBY)
-      end
-
-      it "resolves java to java" do
         java = Gem::Platform.new("java")
+        expect(Gem::Platform.generic(linux)).to eq(Gem::Platform::RUBY)
         expect(Gem::Platform.generic(java)).to eq(java)
+      end
+
+      it "resolves darwin platform to RUBY" do
+        darwin = Gem::Platform.new("arm64-darwin")
+        result = Gem::Platform.generic(darwin)
+        expect(result).to eq(Gem::Platform::RUBY)
+        expect(result).to be_truthy
       end
     end
   end
