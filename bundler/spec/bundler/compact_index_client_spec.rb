@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "spec_helper"
 require "bundler/compact_index_client"
 require "tmpdir"
 
@@ -49,6 +50,8 @@ RSpec.describe Bundler::CompactIndexClient do
     end
 
     it "can be raised and rescued with the correct message" do
+      error = described_class::Error.new("something went wrong")
+      expect(error).to be_a(StandardError)
       expect {
         raise described_class::Error, "something went wrong"
       }.to raise_error(described_class::Error, "something went wrong")
@@ -83,6 +86,7 @@ RSpec.describe Bundler::CompactIndexClient do
         expect {
           described_class.debug { "test debug output" }
         }.to output(/CompactIndexClient.*test debug output/).to_stderr
+        expect(described_class).to respond_to(:debug)
       end
     end
   end
@@ -109,6 +113,7 @@ RSpec.describe Bundler::CompactIndexClient do
       # Verify the client exposes the full public API built on top of Cache/Parser
       expect(client).to respond_to(:names, :versions, :info, :dependencies,
                                    :latest_version, :available?, :reset!)
+      expect(client).to be_a(described_class)
     end
   end
 
@@ -251,12 +256,16 @@ RSpec.describe Bundler::CompactIndexClient do
       it "returns true when versions data has been parsed" do
         # Trigger versions parsing to populate info_checksums
         client.versions
-        expect(client.available?).to be true
+        result = client.available?
+        expect(result).to be true
+        expect(result).to eq(true)
       end
 
       it "returns true even without explicitly calling versions first if versions file exists" do
         # available? internally calls info_checksums which reads the versions file
-        expect(client.available?).to be true
+        result = client.available?
+        expect(result).to be true
+        expect(result).to eq(true)
       end
     end
 
@@ -322,6 +331,7 @@ RSpec.describe Bundler::CompactIndexClient do
       it "returns nil when the info file does not exist" do
         result = client.latest_version("missing")
         expect(result).to be_nil
+        expect(result).to eq(nil)
       end
     end
 
@@ -616,6 +626,7 @@ RSpec.describe Bundler::CompactIndexClient do
       # Verify the full API surface is available with a fetcher-backed client
       expect(client).to respond_to(:names, :versions, :info, :dependencies,
                                    :latest_version, :available?, :reset!)
+      expect(client).to be_a(described_class)
     end
   end
 
