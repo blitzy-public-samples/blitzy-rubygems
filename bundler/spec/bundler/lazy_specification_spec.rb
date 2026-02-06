@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "bundler/lazy_specification"
+
 RSpec.describe Bundler::LazySpecification do
   let(:name)     { "foo" }
   let(:version)  { Gem::Version.new("1.0.0") }
@@ -43,17 +45,20 @@ RSpec.describe Bundler::LazySpecification do
 
     it "defaults dependencies to an empty array" do
       expect(subject.dependencies).to eq([])
+      expect(subject.dependencies).to be_empty
     end
 
     it "defaults required_ruby_version to Gem::Requirement.default" do
       expect(subject.required_ruby_version).to eq(Gem::Requirement.default)
+      expect(subject.required_ruby_version).to be_a(Gem::Requirement)
     end
 
     it "defaults required_rubygems_version to Gem::Requirement.default" do
       expect(subject.required_rubygems_version).to eq(Gem::Requirement.default)
+      expect(subject.required_rubygems_version).to be_a(Gem::Requirement)
     end
 
-    it "stores source" do
+    it "stores source from the argument" do
       expect(subject.source).to eq(source)
     end
 
@@ -61,13 +66,21 @@ RSpec.describe Bundler::LazySpecification do
       expect(subject.most_specific_locked_platform).to be_nil
     end
 
-    it "defaults materialization to nil" do
+    it "defaults materialization to nil (unmaterialized)" do
       expect(subject.materialization).to be_nil
+      expect(subject.incomplete?).to eq(true)
     end
 
     it "works without a source argument" do
       spec = described_class.new("bar", Gem::Version.new("1.0"), Gem::Platform::RUBY)
       expect(spec.source).to be_nil
+      expect(spec.name).to eq("bar")
+    end
+
+    it "preserves an explicit non-ruby platform" do
+      java_platform = Gem::Platform.new("java")
+      spec = described_class.new("bar", Gem::Version.new("1.0"), java_platform, source)
+      expect(spec.platform).to eq(java_platform)
       expect(spec.name).to eq("bar")
     end
   end
@@ -101,6 +114,7 @@ RSpec.describe Bundler::LazySpecification do
     it "copies runtime dependencies from the source spec" do
       lazy = described_class.from_spec(original_spec)
       expect(lazy.dependencies).to eq(runtime_deps)
+      expect(lazy.dependencies.length).to eq(1)
     end
 
     it "copies required_ruby_version from the source spec" do
@@ -117,14 +131,21 @@ RSpec.describe Bundler::LazySpecification do
       lazy = described_class.from_spec(original_spec)
       expect(lazy.source).to eq(source)
     end
+
+    it "returns a new LazySpecification instance with materialization nil" do
+      lazy = described_class.from_spec(original_spec)
+      expect(lazy.materialization).to be_nil
+      expect(lazy.incomplete?).to eq(true)
+    end
   end
 
   # ---------------------------------------------------------------------------
   # #missing?
   # ---------------------------------------------------------------------------
   describe "#missing?" do
-    it "returns false when materialization is nil" do
+    it "returns false when materialization is nil (default state)" do
       expect(subject.missing?).to eq(false)
+      expect(subject.materialization).to be_nil
     end
 
     it "returns true when materialization is self" do
@@ -143,11 +164,12 @@ RSpec.describe Bundler::LazySpecification do
   # #incomplete?
   # ---------------------------------------------------------------------------
   describe "#incomplete?" do
-    it "returns true when materialization is nil" do
+    it "returns true when materialization is nil (default state)" do
       expect(subject.incomplete?).to eq(true)
+      expect(subject.materialization).to be_nil
     end
 
-    it "returns false when materialization is set to self" do
+    it "returns false when materialization is set to self (missing state)" do
       subject.instance_variable_set(:@materialization, subject)
       expect(subject.incomplete?).to eq(false)
     end
@@ -165,12 +187,18 @@ RSpec.describe Bundler::LazySpecification do
   describe "#source_changed?" do
     it "returns false when source has not been changed" do
       expect(subject.source_changed?).to eq(false)
+      expect(subject.source).to eq(source)
     end
 
     it "returns true when source has been replaced" do
       new_source = double(:new_source)
       subject.source = new_source
       expect(subject.source_changed?).to eq(true)
+    end
+
+    it "returns false when source is re-assigned to the same object" do
+      subject.source = source
+      expect(subject.source_changed?).to eq(false)
     end
   end
 
@@ -179,25 +207,30 @@ RSpec.describe Bundler::LazySpecification do
   # ---------------------------------------------------------------------------
   describe "#full_name" do
     context "when platform is ruby" do
-      it "returns name-version" do
+      it "returns name-version without platform suffix" do
         expect(subject.full_name).to eq("foo-1.0.0")
+        expect(subject.full_name).not_to include("ruby")
       end
     end
 
     context "when platform is not ruby" do
-      let(:platform) { Gem::Platform.new("x86_64-linux") }
-
       it "returns name-version-platform" do
-        spec = described_class.new(name, version, platform, source)
+        spec = described_class.new(name, version, Gem::Platform.new("x86_64-linux"), source)
         expect(spec.full_name).to eq("foo-1.0.0-x86_64-linux")
       end
     end
 
     context "when platform is nil (defaults to ruby)" do
-      it "returns name-version" do
+      it "returns name-version without platform suffix" do
         spec = described_class.new(name, version, nil, source)
         expect(spec.full_name).to eq("foo-1.0.0")
       end
+    end
+
+    it "memoizes the result across calls" do
+      first_call = subject.full_name
+      second_call = subject.full_name
+      expect(first_call).to equal(second_call)
     end
   end
 
@@ -205,16 +238,17 @@ RSpec.describe Bundler::LazySpecification do
   # #lock_name
   # ---------------------------------------------------------------------------
   describe "#lock_name" do
-    it "returns the lock name from name_tuple" do
+    it "returns a string containing the gem name" do
       result = subject.lock_name
       expect(result).to be_a(String)
       expect(result).to include("foo")
     end
 
-    it "returns consistent values on repeated calls" do
+    it "returns consistent values on repeated calls (memoized)" do
       first_call = subject.lock_name
       second_call = subject.lock_name
       expect(first_call).to eq(second_call)
+      expect(first_call).to equal(second_call)
     end
   end
 
@@ -231,12 +265,12 @@ RSpec.describe Bundler::LazySpecification do
     end
 
     context "with a non-ruby platform" do
-      let(:platform) { Gem::Platform.new("java") }
-
       it "includes the platform in the name tuple" do
-        spec = described_class.new(name, version, platform, source)
+        java_platform = Gem::Platform.new("java")
+        spec = described_class.new(name, version, java_platform, source)
         tuple = spec.name_tuple
         expect(tuple.platform).to eq("java")
+        expect(tuple.name).to eq("foo")
       end
     end
   end
@@ -290,7 +324,7 @@ RSpec.describe Bundler::LazySpecification do
       expect(subject.hash).to eq(other.hash)
     end
 
-    it "can be used as a Hash key" do
+    it "can be used as a Hash key with equal specs mapping to the same entry" do
       other = described_class.new(name, version, platform)
       hash_map = { subject => "value" }
       expect(hash_map[other]).to eq("value")
@@ -327,13 +361,33 @@ RSpec.describe Bundler::LazySpecification do
       expect(prerelease_spec.satisfies?(dep)).to eq(true)
     end
 
-    it "handles specific requirement normally" do
+    it "satisfies pessimistic version constraint within range" do
       dep = Gem::Dependency.new("foo", "~> 1.0")
       expect(subject.satisfies?(dep)).to eq(true)
     end
 
-    it "rejects version outside specific requirement range" do
+    it "rejects version outside pessimistic constraint range" do
       dep = Gem::Dependency.new("foo", "~> 2.0")
+      expect(subject.satisfies?(dep)).to eq(false)
+    end
+
+    it "satisfies exact version match" do
+      dep = Gem::Dependency.new("foo", "= 1.0.0")
+      expect(subject.satisfies?(dep)).to eq(true)
+    end
+
+    it "does not satisfy mismatched exact version" do
+      dep = Gem::Dependency.new("foo", "= 1.0.1")
+      expect(subject.satisfies?(dep)).to eq(false)
+    end
+
+    it "satisfies combined requirements" do
+      dep = Gem::Dependency.new("foo", [">= 0.5", "< 2.0"])
+      expect(subject.satisfies?(dep)).to eq(true)
+    end
+
+    it "does not satisfy contradictory combined requirements" do
+      dep = Gem::Dependency.new("foo", [">= 2.0", "< 3.0"])
       expect(subject.satisfies?(dep)).to eq(false)
     end
   end
@@ -354,11 +408,12 @@ RSpec.describe Bundler::LazySpecification do
       subject.dependencies = [dep1, dep2]
 
       result = subject.to_lock
-      expect(result).to include("alpha")
-      expect(result).to include("baz")
+      alpha_pos = result.index("alpha")
+      baz_pos = result.index("baz")
+      expect(alpha_pos).to be < baz_pos
     end
 
-    it "excludes development dependencies" do
+    it "excludes development dependencies from lock output" do
       runtime_dep = Gem::Dependency.new("baz", "~> 1.0", :runtime)
       dev_dep = Gem::Dependency.new("test_helper", "~> 1.0", :development)
       subject.dependencies = [runtime_dep, dev_dep]
@@ -379,7 +434,7 @@ RSpec.describe Bundler::LazySpecification do
   # #runtime_dependencies
   # ---------------------------------------------------------------------------
   describe "#runtime_dependencies" do
-    it "is aliased to dependencies" do
+    it "is aliased to dependencies and returns the same object" do
       deps = [Gem::Dependency.new("bar", "~> 1.0")]
       subject.dependencies = deps
       expect(subject.runtime_dependencies).to eq(deps)
@@ -391,7 +446,7 @@ RSpec.describe Bundler::LazySpecification do
   # #inspect
   # ---------------------------------------------------------------------------
   describe "#inspect" do
-    it "returns a readable string representation" do
+    it "returns a readable string with class name, spec name, and version info" do
       result = subject.inspect
       expect(result).to include("Bundler::LazySpecification")
       expect(result).to include("foo")
@@ -414,6 +469,7 @@ RSpec.describe Bundler::LazySpecification do
   describe "#to_s" do
     it "returns the lock_name" do
       expect(subject.to_s).to eq(subject.lock_name)
+      expect(subject.to_s).to be_a(String)
     end
   end
 
@@ -438,7 +494,9 @@ RSpec.describe Bundler::LazySpecification do
         allow(git_source).to receive(:is_a?) do |klass|
           klass == Bundler::Source::Git
         end
-        expect(spec.git_version).to eq(" abc1234")
+        result = spec.git_version
+        expect(result).to eq(" abc1234")
+        expect(result).to start_with(" ")
       end
     end
   end
@@ -448,6 +506,12 @@ RSpec.describe Bundler::LazySpecification do
   # ---------------------------------------------------------------------------
   describe "#force_ruby_platform!" do
     it "sets force_ruby_platform to true" do
+      subject.force_ruby_platform!
+      expect(subject.force_ruby_platform).to eq(true)
+    end
+
+    it "overrides any previous force_ruby_platform value" do
+      subject.force_ruby_platform = false
       subject.force_ruby_platform!
       expect(subject.force_ruby_platform).to eq(true)
     end
@@ -522,13 +586,128 @@ RSpec.describe Bundler::LazySpecification do
       subject.most_specific_locked_platform = plat
       expect(subject.most_specific_locked_platform).to eq(plat)
     end
+
+    it "allows setting and getting source" do
+      new_src = double(:new_source)
+      subject.source = new_src
+      expect(subject.source).to eq(new_src)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Lazy loading behavior
+  # ---------------------------------------------------------------------------
+  describe "lazy loading behavior" do
+    it "starts unmaterialized with materialization as nil" do
+      spec = described_class.new("lazy", Gem::Version.new("0.1"), Gem::Platform::RUBY)
+      expect(spec.materialization).to be_nil
+      expect(spec.incomplete?).to eq(true)
+    end
+
+    it "is not missing when unmaterialized" do
+      spec = described_class.new("lazy", Gem::Version.new("0.1"), Gem::Platform::RUBY)
+      expect(spec.missing?).to eq(false)
+      expect(spec.incomplete?).to eq(true)
+    end
+
+    it "provides all identifier attributes even when unmaterialized" do
+      spec = described_class.new("lazy", Gem::Version.new("0.1"), Gem::Platform::RUBY)
+      expect(spec.name).to eq("lazy")
+      expect(spec.version).to eq(Gem::Version.new("0.1"))
+      expect(spec.full_name).to eq("lazy-0.1")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Source association
+  # ---------------------------------------------------------------------------
+  describe "source association" do
+    it "tracks original source separately from current source" do
+      new_source = double(:new_source)
+      subject.source = new_source
+      expect(subject.source).to eq(new_source)
+      expect(subject.source_changed?).to eq(true)
+    end
+
+    it "reports source unchanged when source is the same as original" do
+      expect(subject.source).to eq(source)
+      expect(subject.source_changed?).to eq(false)
+    end
+
+    it "allows remote to be set independently from source" do
+      remote_uri = "https://rubygems.org"
+      subject.remote = remote_uri
+      expect(subject.remote).to eq(remote_uri)
+      expect(subject.source).to eq(source)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Platform handling
+  # ---------------------------------------------------------------------------
+  describe "platform handling" do
+    it "defaults platform to Gem::Platform::RUBY when nil is provided" do
+      spec = described_class.new("plat_test", Gem::Version.new("1.0"), nil)
+      expect(spec.platform).to eq(Gem::Platform::RUBY)
+    end
+
+    it "preserves explicit non-ruby platform" do
+      java_platform = Gem::Platform.new("java")
+      spec = described_class.new("plat_test", Gem::Version.new("1.0"), java_platform)
+      expect(spec.platform).to eq(java_platform)
+    end
+
+    it "includes platform in full_name for non-ruby platforms" do
+      linux_platform = Gem::Platform.new("x86_64-linux")
+      spec = described_class.new("plat_test", Gem::Version.new("1.0"), linux_platform)
+      expect(spec.full_name).to eq("plat_test-1.0-x86_64-linux")
+      expect(spec.full_name).to include("x86_64-linux")
+    end
+
+    it "omits platform from full_name for ruby platform" do
+      spec = described_class.new("plat_test", Gem::Version.new("1.0"), Gem::Platform::RUBY)
+      expect(spec.full_name).to eq("plat_test-1.0")
+      expect(spec.full_name).not_to include("ruby")
+    end
+
+    it "includes platform in name_tuple" do
+      java_platform = Gem::Platform.new("java")
+      spec = described_class.new("plat_test", Gem::Version.new("1.0"), java_platform)
+      tuple = spec.name_tuple
+      expect(tuple.platform).to eq("java")
+      expect(tuple).to be_a(Gem::NameTuple)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Dependency management
+  # ---------------------------------------------------------------------------
+  describe "dependency management" do
+    it "defaults to an empty array for dependencies" do
+      spec = described_class.new("dep_test", Gem::Version.new("1.0"), Gem::Platform::RUBY)
+      expect(spec.dependencies).to eq([])
+      expect(spec.dependencies).to be_empty
+    end
+
+    it "allows dependencies to be set and retrieved" do
+      deps = [Gem::Dependency.new("rack", "~> 2.0"), Gem::Dependency.new("json", ">= 1.0")]
+      subject.dependencies = deps
+      expect(subject.dependencies).to eq(deps)
+      expect(subject.dependencies.length).to eq(2)
+    end
+
+    it "aliases runtime_dependencies to dependencies" do
+      deps = [Gem::Dependency.new("sinatra", "~> 3.0")]
+      subject.dependencies = deps
+      expect(subject.runtime_dependencies).to equal(subject.dependencies)
+    end
   end
 
   # ---------------------------------------------------------------------------
   # #installable_on_platform? (from MatchPlatform)
   # ---------------------------------------------------------------------------
   describe "#installable_on_platform?" do
-    it "returns true when platform is RUBY" do
+    it "returns true when platform is RUBY (installable everywhere)" do
       expect(subject.installable_on_platform?(Gem::Platform.new("x86_64-linux"))).to eq(true)
     end
 
@@ -537,7 +716,7 @@ RSpec.describe Bundler::LazySpecification do
       expect(spec.installable_on_platform?(Gem::Platform.new("x86_64-linux"))).to eq(true)
     end
 
-    it "returns false when platform does not match" do
+    it "returns false when platform does not match the target" do
       spec = described_class.new(name, version, Gem::Platform.new("java"), source)
       expect(spec.installable_on_platform?(Gem::Platform.new("x86_64-linux"))).to eq(false)
     end
@@ -551,7 +730,7 @@ RSpec.describe Bundler::LazySpecification do
       expect(subject.matches_current_metadata?).to eq(true)
     end
 
-    it "returns true when current Ruby satisfies required version" do
+    it "returns true when current Ruby version satisfies required version" do
       subject.required_ruby_version = Gem::Requirement.new(">= 3.0")
       expect(subject.matches_current_metadata?).to eq(true)
     end
@@ -564,11 +743,11 @@ RSpec.describe Bundler::LazySpecification do
     context "with a spec having no source" do
       subject { described_class.new("nosource", Gem::Version.new("0.1"), Gem::Platform::RUBY) }
 
-      it "full_name still works" do
+      it "full_name still works correctly" do
         expect(subject.full_name).to eq("nosource-0.1")
       end
 
-      it "to_lock still works" do
+      it "to_lock produces valid output" do
         result = subject.to_lock
         expect(result).to include(subject.lock_name)
       end
@@ -577,7 +756,7 @@ RSpec.describe Bundler::LazySpecification do
         expect(subject.source).to be_nil
       end
 
-      it "source_changed? returns false" do
+      it "source_changed? returns false when source was initially nil" do
         expect(subject.source_changed?).to eq(false)
       end
     end
@@ -592,6 +771,13 @@ RSpec.describe Bundler::LazySpecification do
       it "handles zero version" do
         spec = described_class.new("zero", Gem::Version.new("0"), Gem::Platform::RUBY, source)
         expect(spec.full_name).to eq("zero-0")
+        expect(spec.version).to eq(Gem::Version.new("0"))
+      end
+
+      it "handles multi-segment version" do
+        spec = described_class.new("multi", Gem::Version.new("1.2.3.4.5"), Gem::Platform::RUBY, source)
+        expect(spec.full_name).to eq("multi-1.2.3.4.5")
+        expect(spec.version).to eq(Gem::Version.new("1.2.3.4.5"))
       end
     end
 
@@ -609,6 +795,13 @@ RSpec.describe Bundler::LazySpecification do
         set = [spec1, spec2].uniq
         expect(set.length).to eq(2)
       end
+
+      it "different platforms produce distinct set entries" do
+        spec1 = described_class.new("gem", Gem::Version.new("1.0"), Gem::Platform::RUBY)
+        spec2 = described_class.new("gem", Gem::Version.new("1.0"), Gem::Platform.new("java"))
+        set = [spec1, spec2].uniq
+        expect(set.length).to eq(2)
+      end
     end
 
     context "to_lock with dependencies of mixed types" do
@@ -620,28 +813,6 @@ RSpec.describe Bundler::LazySpecification do
         lock_output = subject.to_lock
         expect(lock_output).to include("rack")
         expect(lock_output).not_to include("rspec")
-      end
-    end
-
-    context "satisfies? with edge case requirements" do
-      it "satisfies exact version match" do
-        dep = Gem::Dependency.new("foo", "= 1.0.0")
-        expect(subject.satisfies?(dep)).to eq(true)
-      end
-
-      it "does not satisfy mismatched exact version" do
-        dep = Gem::Dependency.new("foo", "= 1.0.1")
-        expect(subject.satisfies?(dep)).to eq(false)
-      end
-
-      it "satisfies combined requirements" do
-        dep = Gem::Dependency.new("foo", [">= 0.5", "< 2.0"])
-        expect(subject.satisfies?(dep)).to eq(true)
-      end
-
-      it "does not satisfy contradictory combined requirements" do
-        dep = Gem::Dependency.new("foo", [">= 2.0", "< 3.0"])
-        expect(subject.satisfies?(dep)).to eq(false)
       end
     end
   end
