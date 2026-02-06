@@ -3643,6 +3643,77 @@ Did you mean 'Ruby'?
     assert_match "See https://guides.rubygems.org/specification-reference/ for help", @ui.error
   end
 
+  def test_specification_validates_via_policy
+    util_setup_validate
+
+    Dir.chdir @tempdir do
+      assert @a1.validate
+
+      @a1.name = ""
+
+      e = assert_raise Gem::InvalidSpecificationException do
+        @a1.validate
+      end
+
+      assert_match(/invalid value for attribute name/, e.message)
+    end
+  end
+
+  def test_specification_policy_warnings
+    util_setup_validate
+
+    Dir.chdir @tempdir do
+      @a1.summary = "this is my summary"
+      @a1.description = @a1.summary
+
+      use_ui @ui do
+        @a1.validate
+      end
+
+      assert_match "description and summary are identical", @ui.error
+    end
+  end
+
+  def test_specification_policy_strict_mode
+    util_setup_validate
+
+    Dir.chdir @tempdir do
+      @a1.licenses = []
+
+      e = assert_raise Gem::InvalidSpecificationException do
+        @a1.validate(true, true)
+      end
+
+      assert_match(/specification has warnings/, e.message)
+    end
+  end
+
+  def test_specification_policy_homepage_validation
+    util_setup_validate
+
+    Dir.chdir @tempdir do
+      @a1.homepage = "not_a_valid_url"
+
+      e = assert_raise Gem::InvalidSpecificationException do
+        @a1.validate
+      end
+
+      assert_match(/is not a valid HTTP URI/, e.message)
+    end
+  end
+
+  def test_specification_policy_name_characters
+    util_setup_validate
+
+    @a1.name = "invalid name with spaces"
+
+    e = assert_raise Gem::InvalidSpecificationException do
+      @a1.validate
+    end
+
+    assert_match(/can only include letters, numbers, dashes, and underscores/, e.message)
+  end
+
   def test_version
     assert_equal Gem::Version.new("1"), @a1.version
   end

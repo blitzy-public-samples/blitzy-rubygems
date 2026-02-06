@@ -252,4 +252,84 @@ class TestGemStreamUI < Gem::TestCase
     reporter.fetch "a.gem", 1024
     assert_equal "", @out.string
   end
+
+  def test_alert
+    @sui.alert("test message")
+    assert_match(/INFO:/, @out.string)
+    assert_match(/test message/, @out.string)
+  end
+
+  def test_alert_warning
+    @sui.alert_warning("warning msg")
+    assert_match(/WARNING:/, @err.string)
+    assert_match(/warning msg/, @err.string)
+  end
+
+  def test_alert_error
+    @sui.alert_error("error msg")
+    assert_match(/ERROR:/, @err.string)
+    assert_match(/error msg/, @err.string)
+  end
+
+  def test_say
+    @sui.say("hello")
+    assert_equal "hello\n", @out.string
+  end
+
+  def test_say_with_newline
+    @sui.say("hello\n")
+    assert_equal "hello\n", @out.string
+  end
+
+  def test_terminate_interaction_default
+    e = assert_raise(Gem::SystemExitException) do
+      @sui.terminate_interaction
+    end
+    assert_equal 0, e.exit_code
+  end
+
+  def test_terminate_interaction_with_status
+    e = assert_raise(Gem::SystemExitException) do
+      @sui.terminate_interaction(1)
+    end
+    assert_equal 1, e.exit_code
+  end
+
+  def test_verbose_and_quiet_modes
+    @cfg.verbose = false
+    @sui.say("quiet message")
+    assert_equal "quiet message\n", @out.string
+
+    @out.truncate(0)
+    @out.rewind
+
+    @cfg.verbose = true
+    @sui.say("verbose message")
+    assert_equal "verbose message\n", @out.string
+  end
+
+  def test_backtrace
+    Gem.configuration.backtrace = true
+    error = RuntimeError.new("test error")
+    error.set_backtrace(["file.rb:1:in `method_a'", "file.rb:2:in `method_b'"])
+    @sui.backtrace(error)
+    assert_match(/method_a/, @err.string)
+    assert_match(/method_b/, @err.string)
+  end
+
+  def test_ask_yes_no_yes
+    Gem::Timeout.timeout(5) do
+      @in.string = "y\n"
+      result = @sui.ask_yes_no("proceed?")
+      assert_equal true, result
+    end
+  end
+
+  def test_ask_yes_no_no
+    Gem::Timeout.timeout(5) do
+      @in.string = "n\n"
+      result = @sui.ask_yes_no("proceed?")
+      assert_equal false, result
+    end
+  end
 end
