@@ -539,19 +539,17 @@ RSpec.describe "Bundler RubyGems Extensions" do
 
     describe "#encode_with" do
       it "encodes name and requirement to the coder hash" do
-        coder = {}
+        coder = Psych::Coder.new("Gem::Dependency")
         dep.encode_with(coder)
-        expect(coder).to have_key("name")
         expect(coder["name"]).to eq("test_dep")
       end
 
       it "includes all expected keys: name, requirement, type, prerelease, version_requirements" do
-        coder = {}
+        coder = Psych::Coder.new("Gem::Dependency")
         dep.encode_with(coder)
         %w[name requirement type prerelease version_requirements].each do |key|
-          expect(coder).to have_key(key)
+          expect(coder[key]).not_to be_nil
         end
-        expect(coder.keys.length).to be >= 5
       end
     end
 
