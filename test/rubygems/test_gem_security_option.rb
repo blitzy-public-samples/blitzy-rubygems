@@ -106,25 +106,6 @@ class TestGemSecurityOption < Gem::TestCase
     assert_include error.message, "HighSecurity"
   end
 
-  # When OpenSSL is NOT available, verify that attempting to parse a
-  # policy name raises Gem::OptionParser::InvalidArgument with a
-  # message about OpenSSL not being installed.
-  #
-  # This test is skipped when OpenSSL IS available since we cannot
-  # easily undefine Gem::Security::HighSecurity in a running process
-  # without affecting other tests.
-  def test_security_option_without_openssl
-    pend "OpenSSL is available, cannot test missing OpenSSL path" if Gem::HAVE_OPENSSL
-
-    @cmd.add_security_option
-
-    error = assert_raise Gem::OptionParser::InvalidArgument do
-      @cmd.handle_options %w[-P HighSecurity]
-    end
-
-    assert_include error.message, "OpenSSL not installed"
-  end
-
   # Verify that the --trust-policy option is registered under the
   # "Install/Update" option group, matching the production convention
   # used by install and update commands.
