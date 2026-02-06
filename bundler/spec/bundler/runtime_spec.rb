@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
+require "spec_helper"
 require "tmpdir"
 require "bundler/runtime"
+require "bundler/plugin"
+require "bundler/plugin/events"
 
 RSpec.describe Bundler::Runtime do
   # Shared test fixtures for controlled definition doubles
