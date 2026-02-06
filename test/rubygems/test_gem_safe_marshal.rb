@@ -459,6 +459,49 @@ class TestGemSafeMarshal < Gem::TestCase
     end
   end
 
+  def test_safe_marshal_with_psych_tree_encoding
+    original = "café"
+    assert_equal Encoding::UTF_8, original.encoding
+
+    dumped = Marshal.dump(original)
+    loaded = Gem::SafeMarshal.safe_load(dumped)
+
+    assert_equal original.encoding, loaded.encoding
+    assert_equal original, loaded
+  end
+
+  def test_safe_marshal_complex_nested_yaml
+    structure = {
+      "level1" => {
+        "level2" => {
+          "level3" => "deep_value",
+          "numbers" => [1, 2, 3],
+          "count" => 42
+        },
+        "items" => ["a", "b", "c"]
+      },
+      "top_key" => "top_value"
+    }
+
+    assert_safe_load_as structure
+  end
+
+  def test_safe_marshal_with_unicode_strings
+    accented = "résumé"
+    cjk = "日本語"
+    mixed = "Ünïcödé — Pro"
+
+    [accented, cjk, mixed].each do |str|
+      assert_safe_load_as str, additional_methods: [:encoding]
+    end
+  end
+
+  def test_safe_marshal_empty_structures
+    assert_safe_load_as({})
+    assert_safe_load_as([])
+    assert_safe_load_as("", additional_methods: [:encoding])
+  end
+
   def assert_safe_load_marshal(dumped, additional_methods: [], permitted_ivars: nil, equality: true, marshal_dump_equality: true,
     inspect: true, to_s: true)
     loaded = Marshal.load(dumped)
