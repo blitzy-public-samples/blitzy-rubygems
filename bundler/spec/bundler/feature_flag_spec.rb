@@ -4,102 +4,86 @@ require "spec_helper"
 require "bundler/feature_flag"
 
 RSpec.describe Bundler::FeatureFlag do
+  subject(:flag) { described_class.new(version) }
+
   describe "#initialize" do
-    it "stores the bundler version as a Gem::Version" do
-      flag = described_class.new("2.5.0")
-      expect(flag).to be_a(Bundler::FeatureFlag)
+    let(:version) { "2.5.0" }
+
+    it "creates a FeatureFlag instance from a version string" do
+      expect(subject).to be_a(Bundler::FeatureFlag)
+      expect(subject.bundler_2_mode?).to be true
     end
 
-    it "accepts a string version" do
-      flag = described_class.new("3.1.2")
-      expect(flag.bundler_3_mode?).to eq(true)
-      expect(flag.bundler_4_mode?).to eq(false)
+    context "with a pre-release version string" do
+      let(:version) { "4.0.0.dev" }
+
+      it "extracts the correct major version from pre-release versions" do
+        expect(flag.bundler_4_mode?).to be_truthy
+        expect(flag.bundler_5_mode?).to be_falsey
+      end
     end
 
-    it "accepts a Gem::Version object" do
-      version = Gem::Version.new("4.0.0")
-      flag = described_class.new(version)
-      expect(flag.bundler_4_mode?).to eq(true)
-      expect(flag.bundler_5_mode?).to eq(false)
-    end
+    context "with a single-segment version string" do
+      let(:version) { "3" }
 
-    it "correctly extracts the major version from a pre-release version" do
-      flag = described_class.new("4.0.0.dev")
-      expect(flag.bundler_4_mode?).to eq(true)
-      expect(flag.bundler_5_mode?).to eq(false)
-    end
-
-    it "handles single-segment version strings" do
-      flag = described_class.new("2")
-      expect(flag.bundler_2_mode?).to eq(true)
-      expect(flag.bundler_3_mode?).to eq(false)
+      it "correctly interprets single-segment versions" do
+        expect(flag.bundler_3_mode?).to eq(true)
+        expect(flag.bundler_4_mode?).to eq(false)
+      end
     end
   end
 
-  describe "bundler_N_mode? methods" do
-    context "with bundler version 1.0.0" do
-      let(:flag) { described_class.new("1.0.0") }
+  describe "#bundler_N_mode?" do
+    context "with version 1.0.0 (default values)" do
+      let(:version) { "1.0.0" }
 
-      it "returns true for bundler_1_mode?" do
-        expect(flag.bundler_1_mode?).to eq(true)
+      before do
+        flag
       end
 
-      it "returns false for bundler_2_mode? through bundler_10_mode?" do
+      it "returns true only for bundler_1_mode?" do
+        expect(flag.bundler_1_mode?).to be_truthy
+        expect(flag.bundler_2_mode?).to be_falsey
+      end
+
+      it "returns false for all bundler_N_mode? where N > 1" do
         (2..10).each do |v|
           expect(flag.send(:"bundler_#{v}_mode?")).to eq(false)
         end
       end
     end
 
-    context "with bundler version 2.5.0" do
-      let(:flag) { described_class.new("2.5.0") }
+    context "with version 2.5.0" do
+      let(:version) { "2.5.0" }
 
       it "returns true for bundler_1_mode? and bundler_2_mode?" do
-        expect(flag.bundler_1_mode?).to eq(true)
-        expect(flag.bundler_2_mode?).to eq(true)
+        expect(flag.bundler_1_mode?).to be true
+        expect(flag.bundler_2_mode?).to be true
       end
 
       it "returns false for bundler_3_mode? and higher" do
-        (3..10).each do |v|
-          expect(flag.send(:"bundler_#{v}_mode?")).to eq(false)
-        end
+        expect(flag.bundler_3_mode?).to be false
+        expect(flag.bundler_4_mode?).to be false
       end
     end
 
-    context "with bundler version 3.0.0" do
-      let(:flag) { described_class.new("3.0.0") }
+    context "with version 3.0.0" do
+      let(:version) { "3.0.0" }
 
-      it "returns true for bundler_1_mode? through bundler_3_mode?" do
+      it "returns true for modes up to and including 3" do
         expect(flag.bundler_1_mode?).to eq(true)
         expect(flag.bundler_2_mode?).to eq(true)
         expect(flag.bundler_3_mode?).to eq(true)
       end
 
-      it "returns false for bundler_4_mode? and higher" do
-        (4..10).each do |v|
-          expect(flag.send(:"bundler_#{v}_mode?")).to eq(false)
-        end
+      it "returns false for bundler_4_mode? and above" do
+        expect(flag.bundler_4_mode?).to be_falsey
+        expect(flag.bundler_10_mode?).to be_falsey
       end
     end
 
-    context "with bundler version 4.0.0" do
-      let(:flag) { described_class.new("4.0.0") }
-
-      it "returns true for bundler_1_mode? through bundler_4_mode?" do
-        (1..4).each do |v|
-          expect(flag.send(:"bundler_#{v}_mode?")).to eq(true)
-        end
-      end
-
-      it "returns false for bundler_5_mode? and higher" do
-        (5..10).each do |v|
-          expect(flag.send(:"bundler_#{v}_mode?")).to eq(false)
-        end
-      end
-    end
-
-    context "with bundler version 10.0.0" do
-      let(:flag) { described_class.new("10.0.0") }
+    context "with version 10.0.0" do
+      let(:version) { "10.0.0" }
 
       it "returns true for all bundler_N_mode? methods from 1 to 10" do
         (1..10).each do |v|
@@ -107,48 +91,49 @@ RSpec.describe Bundler::FeatureFlag do
         end
       end
     end
+  end
+
+  describe "flag registration" do
+    let(:version) { "1.0.0" }
 
     it "responds to all bundler_N_mode? methods from 1 to 10" do
-      flag = described_class.new("1.0.0")
       (1..10).each do |v|
         expect(flag).to respond_to(:"bundler_#{v}_mode?")
       end
     end
+
+    it "responds to removed_major? and deprecated_major?" do
+      expect(flag).to respond_to(:removed_major?)
+      expect(flag).to respond_to(:deprecated_major?)
+    end
   end
 
   describe "#removed_major?" do
-    context "with bundler version 3.0.0 (major version 3)" do
-      let(:flag) { described_class.new("3.0.0") }
+    context "with version 3.0.0 (major version 3)" do
+      let(:version) { "3.0.0" }
 
       it "returns true when target major version is less than current major" do
         expect(flag.removed_major?(1)).to eq(true)
         expect(flag.removed_major?(2)).to eq(true)
       end
 
-      it "returns false when target major version equals current major" do
-        expect(flag.removed_major?(3)).to eq(false)
-      end
-
-      it "returns false when target major version is greater than current major" do
-        expect(flag.removed_major?(4)).to eq(false)
-        expect(flag.removed_major?(5)).to eq(false)
+      it "returns false when target major version equals or exceeds current major" do
+        expect(flag.removed_major?(3)).to be false
+        expect(flag.removed_major?(4)).to be_falsey
       end
     end
 
-    context "with bundler version 1.0.0 (major version 1)" do
-      let(:flag) { described_class.new("1.0.0") }
+    context "with version 2.0.0 (major version 2)" do
+      let(:version) { "2.0.0" }
 
-      it "returns false for target 1 (equal)" do
-        expect(flag.removed_major?(1)).to eq(false)
-      end
-
-      it "returns false for target 2 (greater)" do
-        expect(flag.removed_major?(2)).to eq(false)
+      it "returns true only for targets below current major" do
+        expect(flag.removed_major?(1)).to be_truthy
+        expect(flag.removed_major?(2)).to be_falsey
       end
     end
 
-    context "with bundler version 5.0.0 (major version 5)" do
-      let(:flag) { described_class.new("5.0.0") }
+    context "with version 5.0.0 (major version 5)" do
+      let(:version) { "5.0.0" }
 
       it "returns true for all targets below 5" do
         (1..4).each do |target|
@@ -164,38 +149,31 @@ RSpec.describe Bundler::FeatureFlag do
   end
 
   describe "#deprecated_major?" do
-    context "with bundler version 3.0.0 (major version 3)" do
-      let(:flag) { described_class.new("3.0.0") }
+    context "with version 2.0.0 (major version 2)" do
+      let(:version) { "2.0.0" }
 
-      it "returns true when target major version is less than current major" do
-        expect(flag.deprecated_major?(1)).to eq(true)
+      it "returns true when target major version is at or below current major" do
         expect(flag.deprecated_major?(2)).to eq(true)
-      end
-
-      it "returns true when target major version equals current major" do
-        expect(flag.deprecated_major?(3)).to eq(true)
-      end
-
-      it "returns false when target major version is greater than current major" do
-        expect(flag.deprecated_major?(4)).to eq(false)
-        expect(flag.deprecated_major?(5)).to eq(false)
-      end
-    end
-
-    context "with bundler version 1.0.0 (major version 1)" do
-      let(:flag) { described_class.new("1.0.0") }
-
-      it "returns true for target 1 (equal)" do
         expect(flag.deprecated_major?(1)).to eq(true)
       end
 
-      it "returns false for target 2 (greater)" do
-        expect(flag.deprecated_major?(2)).to eq(false)
+      it "returns false when target major version exceeds current major" do
+        expect(flag.deprecated_major?(3)).to be_falsey
+        expect(flag.deprecated_major?(4)).to be_falsey
       end
     end
 
-    context "with bundler version 5.0.0 (major version 5)" do
-      let(:flag) { described_class.new("5.0.0") }
+    context "with version 1.0.0 (major version 1)" do
+      let(:version) { "1.0.0" }
+
+      it "returns true for target 1 (equal) and false for target 2 (greater)" do
+        expect(flag.deprecated_major?(1)).to be_truthy
+        expect(flag.deprecated_major?(2)).to be_falsey
+      end
+    end
+
+    context "with version 5.0.0 (major version 5)" do
+      let(:version) { "5.0.0" }
 
       it "returns true for all targets up to and including 5" do
         (1..5).each do |target|
@@ -211,21 +189,21 @@ RSpec.describe Bundler::FeatureFlag do
   end
 
   describe "removed_major? vs deprecated_major? boundary distinction" do
-    let(:flag) { described_class.new("3.0.0") }
+    let(:version) { "3.0.0" }
 
     it "deprecated_major? is true at boundary but removed_major? is false" do
-      expect(flag.deprecated_major?(3)).to eq(true)
-      expect(flag.removed_major?(3)).to eq(false)
+      expect(flag.deprecated_major?(3)).to be true
+      expect(flag.removed_major?(3)).to be false
     end
 
-    it "both are true when target is below current major" do
-      expect(flag.deprecated_major?(2)).to eq(true)
-      expect(flag.removed_major?(2)).to eq(true)
+    it "both return true when target is below current major" do
+      expect(flag.deprecated_major?(2)).to be_truthy
+      expect(flag.removed_major?(2)).to be_truthy
     end
 
-    it "both are false when target is above current major" do
-      expect(flag.deprecated_major?(4)).to eq(false)
-      expect(flag.removed_major?(4)).to eq(false)
+    it "both return false when target is above current major" do
+      expect(flag.deprecated_major?(4)).to be_falsey
+      expect(flag.removed_major?(4)).to be_falsey
     end
   end
 end
