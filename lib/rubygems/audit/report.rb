@@ -17,7 +17,13 @@ class Gem::Audit::Report
   attr_reader :gems_audited
 
   def initialize(vulnerabilities: [], gems_audited: 0)
-    @vulnerabilities = Array(vulnerabilities)
+    # Enforce the edge contract that a non-array or absent match-result is
+    # treated as zero vulnerabilities: only an actual Array is accepted, while
+    # +nil+ or any other non-Array value normalizes to +[]+. Kernel#Array is
+    # deliberately NOT used here -- it would wrap a single non-Array value into a
+    # one-element array (e.g. Array(advisory) => [advisory]) and report a false
+    # vulnerability total.
+    @vulnerabilities = vulnerabilities.is_a?(Array) ? vulnerabilities : []
     @gems_audited = gems_audited.to_i
   end
 

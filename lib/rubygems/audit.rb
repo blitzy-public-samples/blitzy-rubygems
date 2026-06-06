@@ -43,10 +43,14 @@ module Gem::Audit
     # The vulnerability-matching engine is owned by a sibling story and is not
     # wired in here, so no advisories are matched and the audit reports zero
     # vulnerabilities. Reading from +options+ keeps this method an injection
-    # seam, and Array(...) guarantees the value handed to the report is always
-    # an Array -- even if an absent or future matcher yields +nil+ or a single
-    # (non-Array) match.
-    vulnerabilities = Array(options[:vulnerabilities])
+    # seam. An explicit Array type check -- rather than Kernel#Array -- enforces
+    # the edge contract that a non-array or absent match-result is treated as zero
+    # vulnerabilities: +nil+ or any non-Array value becomes +[]+, while an Array is
+    # passed through unchanged. (Kernel#Array would instead wrap a single non-Array
+    # match into a one-element array and report a false vulnerability count.) This
+    # normalization is kept consistent with Gem::Audit::Report#initialize.
+    raw = options[:vulnerabilities]
+    vulnerabilities = raw.is_a?(Array) ? raw : []
 
     # Count the gems that were audited: the latest version of every installed
     # gem. Guard against load errors (for example a missing or empty gem home)
