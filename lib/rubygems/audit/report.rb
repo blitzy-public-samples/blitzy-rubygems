@@ -24,7 +24,11 @@ class Gem::Audit::Report
     # one-element array (e.g. Array(advisory) => [advisory]) and report a false
     # vulnerability total.
     @vulnerabilities = vulnerabilities.is_a?(Array) ? vulnerabilities : []
-    @gems_audited = gems_audited.to_i
+    # +gems_audited+ is the count of gems that were inspected, which is always
+    # non-negative. Coerce to Integer and clamp at 0 so a stray negative value
+    # can never be reported, keeping the field consistent with its documented
+    # non-negative contract.
+    @gems_audited = [gems_audited.to_i, 0].max
   end
 
   ##

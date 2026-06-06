@@ -69,12 +69,23 @@ end
 # namespace+subfiles pattern used by "rubygems/security":
 #
 # * "audit/report" defines Gem::Audit::Report, returned by Gem::Audit.audit
-#   above; and
-# * "audit/formatter" is the formatter registry, which in turn requires the
-#   self-registering "text" and "json" formatters.
+#   above;
+# * "audit/formatter" defines the formatter registry; and
+# * "audit/formatter/text" and "audit/formatter/json" define the concrete,
+#   self-registering formatters.
+#
+# The registry is required BEFORE the concrete formatters on purpose: each
+# concrete formatter opens the Gem::Audit::Formatter namespace and calls
+# Gem::Audit::Formatter.register, both of which require the registry to already
+# be defined. Loading the concrete formatters here -- rather than from within
+# the registry file -- keeps the dependency strictly one-directional
+# (concrete -> registry) and therefore avoids the require cycle that would
+# otherwise emit "circular require considered harmful" warnings.
 #
 # Requiring them here -- after Gem::Audit is declared -- ensures the report
 # data structure, the formatter registry, and both formatters are all available
 # as soon as anything requires "rubygems/audit".
 require_relative "audit/report"
 require_relative "audit/formatter"
+require_relative "audit/formatter/text"
+require_relative "audit/formatter/json"

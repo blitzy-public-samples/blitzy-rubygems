@@ -3,6 +3,7 @@
 require_relative "helper"
 require "rubygems/audit"
 require "stringio"
+require "open3"
 
 class TestGemAuditFormatterJson < Gem::TestCase
   def test_empty_report_is_byte_exact
@@ -91,6 +92,25 @@ class TestGemAuditFormatterJson < Gem::TestCase
       "summary" => { "total" => 1, "gems_audited" => 3 },
     }
     assert_equal expected, parsed
+  end
+
+  def test_require_chain_is_warning_free
+    # Loading the audit subsystem must not emit "circular require considered
+    # harmful" warnings. Each concrete formatter requires the registry, so the
+    # registry must NOT require the concrete formatters back; "rubygems/audit"
+    # owns the load order (registry first, then the concrete formatters).
+    #
+    # The check runs in a fresh child process under -w because the require has
+    # already executed in this process (the constant is loaded), so an in-process
+    # re-require would be a no-op and could not surface the warning.
+    lib = File.expand_path("../../lib", __dir__)
+    _out, err, status = Open3.capture3(
+      Gem.ruby, "-w", "-I", lib, "-e", 'require "rubygems/audit"'
+    )
+
+    assert status.success?, "requiring rubygems/audit failed:\n#{err}"
+    refute_match(/circular require/, err,
+                 "circular require warning in the audit require chain:\n#{err}")
   end
 
   private

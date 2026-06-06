@@ -65,14 +65,75 @@ supplied.
   end
 
   def execute
-    unless %w[text json].include?(options[:format])
-      ui.errs.puts "ERROR: Unknown format '#{options[:format]}'. Valid options: text, json."
+    format = options[:format]
+
+    unless %w[text json].include?(format)
+      ui.errs.puts "ERROR: Unknown format '#{format}'. Valid options: text, json."
       terminate_interaction 1
     end
 
-    report = Gem::Audit.audit(options)
+    if format == "json"
+      execute_json
+    else
+      execute_text
+    end
+  end
 
-    formatter = Gem::Audit::Formatter.for(options[:format])
-    formatter.print_report(report, ui.outs)
+  private
+
+  ##
+  # Render the audit report in the default, human-readable text format.
+  #
+  # This is the unchanged, backward-compatible output path: the audit runs under
+  # the command's normal user interaction, so informational messages and
+  # warnings keep their existing destinations.
+
+  def execute_text
+    report = Gem::Audit.audit(options)
+    Gem::Audit::Formatter.for("text").print_report(report, ui.outs)
+  end
+
+  ##
+  # Render the audit report as a single JSON document on standard output.
+  #
+  # AC-4 requires that, in JSON mode, standard output carry ONLY the JSON
+  # document while every diagnostic -- informational messages AND warnings -- is
+  # written to standard error. RubyGems' +say+ and informational +alert+ helpers
+  # write to standard output by default, so any diagnostic emitted while the
+  # audit runs would otherwise be interleaved with the JSON document, corrupting
+  # it for a strict parser (and for a downstream <code>| jq</code>).
+  #
+  # To guarantee a clean channel, the real standard-output stream is captured up
+  # front as the sole JSON sink, and the audit is executed with all diagnostics
+  # redirected to standard error (see #with_diagnostics_on_stderr). Only after
+  # the audit has completed is the serialized document written to the captured
+  # output stream, so nothing but the JSON document can reach standard output.
+
+  def execute_json
+    out = ui.outs
+
+    report = with_diagnostics_on_stderr { Gem::Audit.audit(options) }
+
+    Gem::Audit::Formatter.for("json").print_report(report, out)
+  end
+
+  ##
+  # Run +block+ with the command's informational output redirected to standard
+  # error for the duration of the call, and return the block's value.
+  #
+  # A temporary Gem::StreamUI is installed whose output stream is the current
+  # error stream, so +say+ and informational +alert+ (normally standard output)
+  # join +alert_warning+/+alert_error+ (already standard error) on standard
+  # error. The original UI -- and therefore the original standard-output stream
+  # reserved for the JSON document -- is restored automatically when the block
+  # returns, because Gem::DefaultUserInteraction#use_ui swaps the UI back in an
+  # +ensure+ block even if the audit raises.
+
+  def with_diagnostics_on_stderr
+    current = ui
+    err_stream = current.errs
+    diagnostics_ui = Gem::StreamUI.new(current.ins, err_stream, err_stream, current.tty?)
+
+    use_ui(diagnostics_ui) { yield }
   end
 end

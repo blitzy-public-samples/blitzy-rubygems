@@ -1,6 +1,12 @@
 # frozen_string_literal: true
 
 require "json"
+
+# Ensure the formatter registry (Gem::Audit::Formatter) is defined before this
+# concrete formatter is opened and self-registers below. This require is
+# one-directional and cycle-free: the registry never requires the concrete
+# formatters back (see lib/rubygems/audit.rb, which loads the registry first and
+# then the concrete formatters).
 require_relative "../formatter"
 
 ##

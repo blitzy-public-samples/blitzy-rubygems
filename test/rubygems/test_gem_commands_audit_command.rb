@@ -75,6 +75,35 @@ class TestGemCommandsAuditCommand < Gem::TestCase
     assert_match(/advisory database is stale/, @ui.error)
   end
 
+  def test_execute_json_routes_info_diagnostics_to_stderr # AC-4 (informational)
+    # Informational `alert`/`say` output is written to STDOUT by RubyGems
+    # convention. In JSON mode it MUST be redirected to STDERR so the JSON
+    # document on STDOUT remains a single, parseable payload. This is the
+    # regression guard for the AC-4 stdout-contamination bug: without the
+    # redirect, "INFO:  ..." would be interleaved with the JSON and JSON.parse
+    # would raise.
+    report = build_report(vulns: [build_vuln(severity: "high")], gems_audited: 3)
+    audit = lambda do |_options|
+      @cmd.alert "audit info diagnostic"
+      @cmd.say "a plain status line"
+      report
+    end
+    @cmd.options[:format] = "json"
+    Gem::Audit.stub(:audit, audit) do
+      use_ui @ui do
+        @cmd.execute
+      end
+    end
+    # STDOUT is exactly one parseable JSON document and nothing else.
+    parsed = nil
+    assert_nothing_raised { parsed = JSON.parse(@ui.output) }
+    assert parsed.key?("vulnerabilities")
+    refute_match(/INFO:|audit info diagnostic|a plain status line/, @ui.output)
+    # The diagnostics are present only on STDERR.
+    assert_match(/audit info diagnostic/, @ui.error)
+    assert_match(/a plain status line/, @ui.error)
+  end
+
   def test_execute_invalid_format_writes_exact_error_and_exits_one # AC-5
     @cmd.options[:format] = "xml"
     use_ui @ui do
@@ -111,18 +140,23 @@ class TestGemCommandsAuditCommand < Gem::TestCase
     assert_equal [], JSON.parse(@ui.output)["vulnerabilities"].first["patched_versions"]
   end
 
-  def test_execute_text_default_is_unchanged # edge - backward compat
+  # The default (no --format) path must produce the EXACT human-readable report
+  # so that a broken text formatter -- one that omits the CVE/severity/patched
+  # data or changes the wording -- cannot pass (R2 backward compatibility).
+  def test_execute_text_default_is_unchanged # edge - backward compat (R2)
     report = build_report(vulns: [build_vuln(severity: "high")], gems_audited: 1)
     Gem::Audit.stub(:audit, report) do
       use_ui @ui do
         @cmd.execute
       end
     end
-    refute_empty @ui.output
-    refute @ui.output.start_with?('{"vulnerabilities"')
+    expected = "rack 2.0.1 (CVE-2018-16471): severity high; patched: none\n" \
+               "1 vulnerability found across 1 gem audited.\n"
+    assert_equal expected, @ui.output
+    assert_equal "", @ui.error
   end
 
-  def test_execute_explicit_format_text_behaves_like_default # edge
+  def test_execute_explicit_format_text_behaves_like_default # edge (R2)
     report = build_report(vulns: [build_vuln(severity: "high")], gems_audited: 1)
     @cmd.handle_options %w[--format text]
     Gem::Audit.stub(:audit, report) do
@@ -130,8 +164,10 @@ class TestGemCommandsAuditCommand < Gem::TestCase
         @cmd.execute
       end
     end
-    refute_empty @ui.output
-    refute @ui.output.start_with?('{"vulnerabilities"')
+    expected = "rack 2.0.1 (CVE-2018-16471): severity high; patched: none\n" \
+               "1 vulnerability found across 1 gem audited.\n"
+    assert_equal expected, @ui.output
+    assert_equal "", @ui.error
   end
 
   def test_execute_json_honors_already_filtered_severity_set # edge

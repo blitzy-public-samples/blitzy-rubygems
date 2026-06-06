@@ -49,5 +49,14 @@ module Gem::Audit::Formatter
   end
 end
 
-require_relative "formatter/text"
-require_relative "formatter/json"
+# NOTE: the concrete formatters (formatter/text, formatter/json) are
+# deliberately NOT required here. Each concrete formatter requires this
+# registry file so that Gem::Audit::Formatter is defined before the formatter
+# class is opened and self-registered. Requiring the concrete formatters from
+# this file as well would create a require cycle (registry -> concrete ->
+# registry) and emit "loading in progress, circular require considered harmful"
+# warnings under +ruby -w+.
+#
+# Instead, "rubygems/audit" loads this registry first and then requires the
+# concrete formatters, giving a strictly one-directional dependency
+# (registry <- concrete) with no cycle while preserving self-registration.
