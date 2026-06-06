@@ -37,6 +37,7 @@ class Gem::CommandManager
   include Gem::UserInteraction
 
   BUILTIN_COMMANDS = [ # :nodoc:
+    :audit,
     :build,
     :cert,
     :check,
