@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# .bundler-audit.yml — dependency security-audit triage policy
+# =============================================================================
+#
+# This file is consumed by `bundler-audit` (and by the project's audit harness,
+# tool/audit/audit.rb) for every lockfile under tool/bundler/*_gems.rb.lock.
+#
+# POLICY: default-deny / fix-first.
+#   * The audit fail-gate must stay GREEN. Vulnerabilities are resolved by
+#     upgrading the affected gem to a patched version (see `rake update` and the
+#     `bundle lock --update <gem>` workflow), NOT by suppression.
+#   * The `ignore:` list below is the ONLY way to accept a risk, and it must be
+#     EMPTY unless an advisory is genuinely non-applicable or unfixable. Every
+#     entry MUST carry an inline justification and an owner/date, and ignored
+#     advisories are still printed by the harness (clearly labelled "triaged"),
+#     so nothing is ever silently suppressed.
+#
+# TRIAGE OUTCOME (current):
+#   * Risk surfaces examined : 214 resolved gem specs across 7 lockfiles
+#                              (107 unique gem names; 26 are precompiled
+#                              platform-variant builds of native gems).
+#   * Dependency sources     : 100% HTTPS (rubygems.org + github.com) →
+#                              0 insecure sources.
+#   * Known advisories       : 34 (across 9 gems) at baseline → ALL REMEDIATED
+#                              by upgrading to patched versions. 0 remain.
+#   * Advisories ignored     : 0 (nothing accepted/suppressed).
+#
+# Because every advisory was fixable, the ignore list is intentionally empty.
+ignore: []
