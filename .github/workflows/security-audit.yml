@@ -1,0 +1,95 @@
+---
+name: security-audit
+
+# Dependency security audit for the bundled dev/test/release tool gemsets.
+#
+# This workflow scans every tool/bundler/*_gems.rb.lock lockfile against the
+# community ruby-advisory-db (via bundler-audit) using the project's own
+# multi-lockfile harness, tool/audit/audit.rb. It:
+#   * runs on a daily schedule so newly-published advisories against
+#     already-pinned dependencies are caught promptly,
+#   * runs on pull requests that touch dependency lockfiles or the audit
+#     tooling, so regressions are blocked before merge,
+#   * can be triggered manually via workflow_dispatch,
+#   * refreshes the advisory database, then enforces a fail-gate that turns the
+#     job red when any actionable advisory is present.
+
+on:
+  schedule:
+    # Daily at 07:00 UTC. Newly-disclosed CVEs affect unchanged, already-locked
+    # gems, so a time-based scan is required in addition to the PR trigger.
+    - cron: 0 7 * * *
+  pull_request:
+    paths:
+      - tool/bundler/**
+      - tool/audit/**
+      - .bundler-audit.yml
+      - .github/workflows/security-audit.yml
+  push:
+    branches:
+      - master
+    paths:
+      - tool/bundler/**
+      - tool/audit/**
+      - .bundler-audit.yml
+      - .github/workflows/security-audit.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:  # added using https://github.com/step-security/secure-workflows
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  bundler_audit:
+    name: Dependency security audit
+    runs-on: ubuntu-24.04
+    # Scheduled runs only make sense on the canonical repository; pull_request
+    # and manual dispatch are allowed to run on forks as well.
+    if: github.repository == 'ruby/rubygems' || github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@0481980f17b760ef6bca5e8c55809102a0af1e5a # v1.263.0
+        with:
+          ruby-version: 3.4.5
+          bundler: none
+
+      - name: Show versions
+        run: ruby --version
+
+      - name: Install bundler-audit
+        run: gem install --no-document bundler-audit -v "~> 0.9"
+
+      - name: Refresh ruby-advisory-db
+        run: bundler-audit update
+
+      - name: Generate audit report (Markdown)
+        # Never fail this step: the report must always be produced so it can be
+        # uploaded as an artifact even when the fail-gate (below) trips. Write
+        # to a runner-ephemeral path so the committed, curated report at
+        # tool/audit/SECURITY_AUDIT_REPORT.md is never overwritten in CI.
+        run: ruby tool/audit/audit.rb --format markdown --output "${RUNNER_TEMP}/security-audit-report.md" || true
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: security-audit-report
+          path: ${{ runner.temp }}/security-audit-report.md
+          if-no-files-found: warn
+
+      - name: Security audit fail-gate
+        # Prints the human-readable report and exits non-zero if any actionable
+        # advisory is present (after honoring .bundler-audit.yml). This is the
+        # gate that turns the job red.
+        run: ruby tool/audit/audit.rb
